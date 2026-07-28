@@ -25,6 +25,33 @@ val keystoreProperties = Properties().apply {
 }
 val hasReleaseKeystore = keystorePropertiesFile.exists()
 
+/// Lê uma chave obrigatória do key.properties com mensagem útil quando falta.
+///
+/// Sem isto o Gradle morre com "null cannot be cast to non-null type
+/// kotlin.String", que não diz nada sobre a causa. E a causa mais comum é
+/// sutil: editores do Windows gravam o arquivo com marca de ordem de bytes
+/// (BOM), e o Java passa a ler a primeira chave como "﻿storePassword" —
+/// ou seja, ela simplesmente não existe.
+fun Properties.require(key: String): String {
+    val value = getProperty(key)
+    if (!value.isNullOrBlank()) return value
+
+    val found = stringPropertyNames().joinToString(", ")
+    throw GradleException(
+        """
+        android/key.properties não tem a chave "$key".
+
+        Chaves encontradas: $found
+
+        Se o nome acima parece certo mas tem lixo invisível no começo, o
+        arquivo foi salvo com BOM. Regrave sem BOM:
+
+          ${'$'}t = [IO.File]::ReadAllText("android/key.properties") -replace "^﻿", ""
+          [IO.File]::WriteAllText("android/key.properties", ${'$'}t, (New-Object Text.UTF8Encoding ${'$'}false))
+        """.trimIndent(),
+    )
+}
+
 android {
     namespace = "com.routely.routely"
     compileSdk = flutter.compileSdkVersion
@@ -56,10 +83,10 @@ android {
     signingConfigs {
         if (hasReleaseKeystore) {
             create("release") {
-                keyAlias = keystoreProperties["keyAlias"] as String
-                keyPassword = keystoreProperties["keyPassword"] as String
-                storeFile = file(keystoreProperties["storeFile"] as String)
-                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = keystoreProperties.require("keyAlias")
+                keyPassword = keystoreProperties.require("keyPassword")
+                storeFile = file(keystoreProperties.require("storeFile"))
+                storePassword = keystoreProperties.require("storePassword")
             }
         }
     }
