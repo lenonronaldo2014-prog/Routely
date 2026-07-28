@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Regras de extração de dados (Android 12+, API 31+).
+
+  `cloud-backup` é a cópia para o Google Drive do usuário.
+  `device-transfer` é a transferência direta entre dois aparelhos.
+
+  Ambas são gratuitas e não dependem de servidor nosso — é o que resolve
+  "troquei de celular e perdi tudo" sem infraestrutura.
+
+  Como no backup_rules.xml: havendo <include>, só o listado é copiado. As
+  fotos temporárias de etiqueta ficam de fora por consequência, sem precisar
+  de <exclude> — que aliás seria inválido aqui.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="database" path="routely.db"/>
+        <include domain="sharedpref" path="."/>
+    </cloud-backup>
+
+    <device-transfer>
+        <include domain="database" path="routely.db"/>
+        <include domain="sharedpref" path="."/>
+    </device-transfer>
+</data-extraction-rules>

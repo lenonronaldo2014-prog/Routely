@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Política de Privacidade — Routely</title>
+<style>
+  :root {
+    --brand: #14603F;
+    --text: #101C16;
+    --muted: #56675D;
+    --border: #DCE5DF;
+    --surface: #FFFFFF;
+    --background: #F5F8F6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --brand: #45BE85;
+      --text: #E9F1EB;
+      --muted: #9FB2A7;
+      --border: #2B3931;
+      --surface: #16201B;
+      --background: #0D1411;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1.25rem 4rem;
+    background: var(--background);
+    color: var(--text);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 44rem; margin: 0 auto; }
+  h1 { font-size: 1.9rem; letter-spacing: -0.02em; margin: 0 0 .35rem; }
+  h2 {
+    font-size: 1.15rem;
+    margin: 2.5rem 0 .75rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+  }
+  h2:first-of-type { border-top: none; padding-top: 0; }
+  .updated { color: var(--muted); font-size: .9rem; margin: 0 0 2rem; }
+  .lead {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--brand);
+    border-radius: 10px;
+    padding: 1rem 1.15rem;
+    margin: 0 0 2rem;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; }
+  th, td { text-align: left; padding: .6rem .5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; }
+  ul { padding-left: 1.2rem; }
+  li { margin: .4rem 0; }
+  strong { font-weight: 700; }
+  code {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: .1rem .35rem;
+    font-size: .9em;
+  }
+  footer { margin-top: 3rem; color: var(--muted); font-size: .9rem; }
+  a { color: var(--brand); }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Política de Privacidade — Routely</h1>
+<p class="updated">Última atualização: 28 de julho de 2026</p>
+
+<p class="lead">
+  <strong>Resumo:</strong> o Routely guarda tudo no seu próprio celular. Não temos
+  servidor, não temos conta de usuário e não recebemos os seus dados. Os
+  endereços que você cadastra, as rotas e o histórico ficam no aparelho e só
+  saem dele se você mandar.
+</p>
+
+<h2>Quem somos</h2>
+<p>
+  O Routely é um aplicativo que organiza endereços de entrega e calcula a
+  melhor ordem para percorrê-los, a partir da sua localização atual.
+</p>
+
+<h2>Quais dados o app usa</h2>
+
+<table>
+  <tr>
+    <th>Dado</th>
+    <th>Para quê</th>
+    <th>Onde fica</th>
+  </tr>
+  <tr>
+    <td><strong>Localização aproximada e precisa</strong></td>
+    <td>Calcular a rota a partir de onde você está e centralizar o mapa quando
+        você ajusta a localização de uma entrega.</td>
+    <td>No aparelho. Nunca é enviada para nós.</td>
+  </tr>
+  <tr>
+    <td><strong>Endereços de entrega</strong></td>
+    <td>Montar e ordenar o roteiro.</td>
+    <td>No banco de dados local do app.</td>
+  </tr>
+  <tr>
+    <td><strong>Câmera</strong></td>
+    <td>Ler o endereço da etiqueta da encomenda.</td>
+    <td>A foto é processada no próprio aparelho e não é salva nem enviada.</td>
+  </tr>
+  <tr>
+    <td><strong>Histórico de entregas</strong></td>
+    <td>Mostrar o que você já entregou, por dia.</td>
+    <td>No banco de dados local do app.</td>
+  </tr>
+</table>
+
+<h2>Localização</h2>
+<p>
+  O app pede acesso à localização <strong>apenas enquanto está em uso</strong>.
+  Não há acesso em segundo plano: a posição é lida no momento em que você toca
+  para calcular ou recalcular uma rota, ou quando abre o mapa para ajustar um
+  ponto.
+</p>
+<p>
+  A sua localização <strong>não é enviada para nenhum servidor</strong>, nosso
+  ou de terceiros. Ela é usada apenas dentro do aparelho, para calcular
+  distâncias.
+</p>
+
+<h2>Câmera</h2>
+<p>
+  A câmera é usada só na função de ler a etiqueta da encomenda. O
+  reconhecimento de texto acontece <strong>dentro do aparelho</strong>, pela
+  biblioteca ML Kit do Google, sem conexão com a internet.
+</p>
+<p>
+  A foto é descartada após a leitura. Ela não é salva na galeria nem enviada
+  para lugar nenhum. O app <strong>não pede acesso às suas fotos</strong>.
+</p>
+
+<h2>Serviços de terceiros</h2>
+<p>
+  Quando você cadastra um endereço e tem internet, o app pode consultar
+  serviços públicos para completar o endereço e localizá-lo no mapa. Nesses
+  casos, o que é enviado é <strong>apenas o endereço consultado</strong> —
+  nunca a sua identidade, sua localização ou seus outros dados.
+</p>
+<ul>
+  <li><strong>ViaCEP</strong> — converte um CEP em logradouro, bairro e cidade.</li>
+  <li><strong>Nominatim / OpenStreetMap</strong> — converte um endereço em
+      coordenadas e fornece as imagens do mapa.</li>
+</ul>
+<p>
+  O app também abre o <strong>Google Maps</strong> ou o <strong>Waze</strong>
+  para a navegação. A partir do momento em que um desses aplicativos abre, ele
+  passa a seguir a política de privacidade do próprio aplicativo, não a nossa.
+</p>
+
+<h2>O que o app NÃO faz</h2>
+<ul>
+  <li>Não cria conta, não pede login, não pede senha.</li>
+  <li>Não coleta nome, e-mail, telefone ou documento.</li>
+  <li>Não acessa a localização em segundo plano.</li>
+  <li>Não acessa a sua galeria de fotos nem a sua lista de contatos.</li>
+  <li>Não usa anúncios nem ferramentas de rastreamento ou análise de uso.</li>
+  <li>Não vende, aluga nem compartilha dados com terceiros.</li>
+</ul>
+
+<h2>Backup</h2>
+<p>
+  O Android pode fazer cópia de segurança automática dos dados do app na conta
+  do Google do próprio usuário, para restaurar em um aparelho novo. Esse backup
+  é feito pelo sistema Android e fica na conta do usuário — não temos acesso a
+  ele. As fotos temporárias da leitura de etiquetas ficam <strong>fora</strong>
+  do backup de propósito.
+</p>
+<p>
+  Você também pode exportar os seus dados manualmente, em
+  <em>Configurações → Meus dados → Exportar meus dados</em>. O arquivo gerado
+  fica sob o seu controle.
+</p>
+
+<h2>Como apagar os seus dados</h2>
+<p>
+  Como tudo fica no aparelho, você tem controle total:
+</p>
+<ul>
+  <li>Apagar entregas individualmente, na lista.</li>
+  <li>Apagar o histórico em <em>Configurações → Meus dados → Histórico de
+      entregas</em>.</li>
+  <li><strong>Desinstalar o app</strong> remove todos os dados do aparelho.</li>
+</ul>
+<p>
+  Se você tiver ativado o backup automático do Android, apague também a cópia
+  guardada em <em>drive.google.com</em> → Configurações → Gerenciar backups.
+</p>
+
+<h2>Crianças</h2>
+<p>
+  O Routely é uma ferramenta de trabalho e não é direcionado a menores de 13
+  anos. Não coletamos conscientemente dados de crianças.
+</p>
+
+<h2>Mudanças nesta política</h2>
+<p>
+  Se esta política mudar, a data no topo será atualizada. Mudanças relevantes
+  serão comunicadas dentro do aplicativo.
+</p>
+
+<h2>Contato</h2>
+<p>
+  Dúvidas sobre privacidade podem ser enviadas para
+  <a href="mailto:skanzrbx@gmail.com">skanzrbx@gmail.com</a>.
+</p>
+
+<footer>
+  Routely — código-fonte em
+  <a href="https://github.com/lenonronaldo2014-prog/Routely">github.com/lenonronaldo2014-prog/Routely</a>.
+</footer>
+
+</main>
+</body>
+</html>

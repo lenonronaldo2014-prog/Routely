@@ -1,0 +1,107 @@
+name: routely
+description: "Routely — organize suas entregas e descubra a melhor rota."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.3
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # Arquitetura (mesmo padrão do niLeon-admin)
+  get_it: ^8.0.2
+  bloc: ^9.1.0
+  flutter_bloc: ^9.1.1
+  equatable: ^2.0.7
+  dartz: ^0.10.1
+
+  # Rede / infraestrutura
+  http: ^1.5.0
+  connectivity_plus: ^7.0.0
+  shared_preferences: ^2.5.3
+
+  # Persistência local (offline-first)
+  sqflite: ^2.4.1
+  path: ^1.9.0
+
+  # Localização e navegação
+  geolocator: ^13.0.2
+  url_launcher: ^6.3.1
+
+  # Mapa para o usuário corrigir a localização à mão quando o geocoding erra.
+  # flutter_map + OpenStreetMap em vez do SDK do Google: não tem chave, não tem
+  # custo por carregamento de mapa, e é o mesmo caminho para tiles offline
+  # depois.
+  flutter_map: ^8.1.1
+  latlong2: ^0.9.1
+
+  # Ler a etiqueta da encomenda. O ML Kit roda o reconhecimento no próprio
+  # aparelho: sem chave, sem custo por leitura e sem depender de rede.
+  google_mlkit_text_recognition: ^0.15.0
+  # Câmera direta, sem galeria — assim não precisa de READ_MEDIA_IMAGES, que é
+  # permissão sensível na Play Store.
+  camera: ^0.11.0+2
+
+  # Importar a base de CEP de um arquivo escolhido pelo usuário.
+  # No Android usa o Storage Access Framework, que NÃO exige permissão de
+  # armazenamento — mantém a lista de permissões enxuta para a Play Store.
+  file_picker: ^8.1.6
+  # Compartilhar o arquivo de backup (WhatsApp, e-mail, Drive — o que o usuário
+  # preferir). Não pede permissão nenhuma.
+  share_plus: ^10.1.4
+  path_provider: ^2.1.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  mockito: ^5.4.4
+  build_runner: ^2.4.8
+  # Desenha o ícone do app por código (tool/generate_icon.dart) e gera os
+  # arquivos de todas as densidades. Manter o gerador no repositório permite
+  # ajustar a arte depois sem depender de ferramenta externa nem de alguém
+  # ter o arquivo original.
+  image: ^4.3.0
+  flutter_launcher_icons: ^0.14.3
+  # Roda o SQLite de verdade nos testes. Sem isso a persistência da rota — o
+  # ponto mais crítico do app — só seria testada com mock, que não pega erro
+  # de schema, de transação nem de migração.
+  sqflite_common_ffi: ^2.3.4
+
+# Ícone do app.
+#
+# A arte fica em assets/icon/source.png (PNG quadrado, 1024×1024). Todo o
+# redimensionamento é feito pelo próprio flutter_launcher_icons.
+#
+# Regenerar:
+#   dart run tool/generate_icon.dart      # cor de fundo a partir da arte
+#   dart run flutter_launcher_icons       # densidades Android + tamanhos iOS
+flutter_launcher_icons:
+  android: true
+  ios: true
+  # icon.png é gerado por tool/generate_icon.dart a partir de source.png:
+  # recorta a ilustração e descarta o texto, que some no tamanho real.
+  image_path: "assets/icon/icon.png"
+
+  # Ícone adaptativo (Android 8+): o launcher recorta em círculo, squircle ou
+  # gota. A arte entra recuada para nada importante ficar fora do corte, e o
+  # fundo é a mesma cor da própria arte — assim a borda dela não aparece
+  # flutuando dentro do recorte.
+  adaptive_icon_foreground: "assets/icon/icon.png"
+  adaptive_icon_foreground_inset: 16
+  adaptive_icon_background: "assets/icon/background.png"
+
+  # A App Store recusa ícone com canal alfa.
+  remove_alpha_ios: true
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    # Só a marca reduzida vai para dentro do app. A arte de 1024 e o fundo são
+    # insumos de build do flutter_launcher_icons — não precisam ir no APK.
+    - assets/icon/app_mark.png

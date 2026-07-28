@@ -1,0 +1,19 @@
+# Modelo. Copie para `android/key.properties` e preencha com os seus dados.
+#
+# O arquivo real está no .gitignore e NUNCA deve ser versionado — ele tem a
+# senha da chave que assina o app.
+#
+# Para gerar a keystore (uma vez só, e guarde o arquivo em mais de um lugar):
+#
+#   keytool -genkey -v -keystore routely-release.jks \
+#     -keyalg RSA -keysize 2048 -validity 10000 -alias routely
+#
+# Se você perder esse .jks, não existe recuperação: a Play Store não aceita
+# atualização assinada com outra chave, e o app teria que ser republicado do
+# zero, perdendo avaliações e instalações.
+
+storePassword=SUA_SENHA_DA_KEYSTORE
+keyPassword=SUA_SENHA_DA_CHAVE
+keyAlias=routely
+# Caminho do .jks. Relativo à pasta android/app/, ou absoluto.
+storeFile=../../routely-release.jks

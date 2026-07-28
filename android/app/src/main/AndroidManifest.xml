@@ -1,0 +1,113 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      PERMISSÕES — mantidas no mínimo de propósito.
+
+      Só localização em primeiro plano. ACCESS_BACKGROUND_LOCATION está
+      deliberadamente AUSENTE: ela obriga a preencher o formulário de
+      declaração de permissão sensível na Play Console, gravar um vídeo
+      demonstrando o uso e passar por revisão manual — e é a principal causa
+      de recusa/atraso em apps de rota e entrega.
+
+      O Routely lê a posição só quando o usuário toca em "calcular rota", com o
+      app aberto na tela. A navegação em si é delegada ao Google Maps/Waze, que
+      já têm essa permissão. Então nada aqui exige declaração especial.
+
+      Antes de adicionar qualquer permissão nova, confira em
+      https://support.google.com/googleplay/android-developer/answer/9888170
+      se ela é considerada sensível.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
+    <!--
+      Câmera para ler a etiqueta da encomenda.
+
+      Permissão comum de runtime, NÃO sensível — diferente da localização em
+      background, não exige formulário de declaração nem vídeo.
+
+      Note que READ_MEDIA_IMAGES está ausente de propósito: o app usa a câmera
+      direto, sem galeria. Acesso à galeria é permissão sensível na Play Store
+      e não traria nada — ninguém fotografa a etiqueta hoje para cadastrar
+      amanhã.
+    -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+
+    <!--
+      GPS não é obrigatório para instalar: o app funciona para cadastrar
+      entregas sem ele. Marcar required="false" amplia o alcance na loja e
+      evita filtro desnecessário de dispositivos.
+    -->
+    <uses-feature
+        android:name="android.hardware.location.gps"
+        android:required="false"/>
+
+    <!-- Idem para a câmera: sem ela o app ainda funciona digitando o endereço. -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false"/>
+
+    <!--
+      Backup automático ligado: o Android sobe o banco e as preferências para o
+      Google Drive da conta do usuário, sem custo para o app e sem servidor
+      nosso. Ao instalar num aparelho novo, o sistema restaura sozinho — é a
+      resposta de custo zero para "troquei de celular e perdi tudo".
+    -->
+    <application
+        android:label="Routely"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <meta-data
+              android:name="io.flutter.embedding.android.NormalTheme"
+              android:resource="@style/NormalTheme"
+              />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <!-- Don't delete the meta-data below.
+             This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+    </application>
+
+    <!--
+      Visibilidade de pacotes (Android 11+). Declaramos só os intents que
+      realmente usamos.
+
+      NUNCA usar QUERY_ALL_PACKAGES aqui: ela é permissão sensível na Play
+      Store, exige justificativa formal e praticamente garante revisão manual.
+      As declarações abaixo cobrem tudo que o url_launcher precisa neste app.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT"/>
+            <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- Abrir a rota no Google Maps / Waze / navegador. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="geo"/>
+        </intent>
+    </queries>
+</manifest>

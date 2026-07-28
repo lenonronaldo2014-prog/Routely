@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Regras do Auto Backup do Android (API 23-30).
+
+  O Android sobe estes arquivos para o Google Drive da conta do usuário, sem
+  custo para o app e sem servidor nosso. Ao instalar num celular novo, o
+  sistema restaura sozinho. É a resposta de custo zero para "troquei de
+  aparelho e perdi tudo".
+
+  Importante: quando há qualquer <include>, **só** o que está listado é
+  copiado. Tudo o mais fica de fora automaticamente — não existe e nem é
+  válido escrever <exclude> para um domínio que não foi incluído.
+
+  Na prática isso significa que as fotos temporárias da leitura de etiqueta,
+  que ficam no diretório de arquivos do app e têm nome e endereço de cliente,
+  não vão para nuvem nenhuma.
+-->
+<full-backup-content>
+    <!-- Entregas, rota em andamento e histórico. -->
+    <include domain="database" path="routely.db"/>
+    <!-- Tema, tempo de parada, velocidade média, plano. -->
+    <include domain="sharedpref" path="."/>
+</full-backup-content>
