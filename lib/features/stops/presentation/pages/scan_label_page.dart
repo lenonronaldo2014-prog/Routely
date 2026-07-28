@@ -141,6 +141,13 @@ class _ScanLabelPageState extends State<ScanLabelPage>
       appBar: AppBar(
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
+        // O `titleTextStyle` do tema traz a cor do texto do tema ativo, e
+        // `foregroundColor` não sobrescreve isso. Sem esta linha, no modo
+        // claro o título fica escuro sobre a barra preta e some.
+        titleTextStyle: Theme.of(context)
+            .appBarTheme
+            .titleTextStyle
+            ?.copyWith(color: Colors.white),
         title: const Text('Escanear etiqueta'),
       ),
       body: _error != null
