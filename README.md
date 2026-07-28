@@ -7,10 +7,9 @@ distância de cada uma — para **você** escolher qual fazer.
 **[⬇️ Baixar o APK](https://github.com/lenonronaldo2014-prog/Routely/releases/latest)**
  · [Política de privacidade](https://lenonronaldo2014-prog.github.io/Routely/)
 
-> A versão publicada nas releases está assinada com chave de desenvolvimento.
-> Instala e funciona, mas quando o app for para a Play Store será preciso
-> desinstalá-la antes — o Android bloqueia atualização entre assinaturas
-> diferentes. Exporte os dados antes, em *Configurações → Meus dados*.
+Baixe o `arm64-v8a` (~32 MB) — cobre praticamente todo Android atual. Os APKs
+são assinados com a chave de release, a mesma que vai para a Play Store, então
+quem instala hoje atualiza direto quando o app for publicado.
 
 ## A ideia central
 
@@ -499,27 +498,39 @@ essencial pode encostar na borda.
 > A ficha da loja também precisa de um **ícone próprio, 512×512**, separado do
 > ícone do app.
 
-### Distribuição fora da loja
-
-O build de release funciona sem keystore própria: cai na chave de debug, que
-instala normalmente em qualquer aparelho. Só a Play Store recusa.
+### Assinatura e distribuição
 
 ```bash
 flutter build apk --release --split-per-abi
 ```
 
-Gera três APKs. O `arm64-v8a` (~32 MB) cobre praticamente todo Android atual;
-o universal (~85 MB) funciona em qualquer um.
+O build lê a chave de `android/key.properties` (fora do repositório) e, quando
+esse arquivo não existe, cai na chave de debug — assim quem clonar o projeto
+consegue compilar sem ter a chave. Modelo e comando de geração em
+[key.properties.example](android/key.properties.example).
+
+Conferir com qual chave um APK foi assinado:
+
+```bash
+apksigner verify --print-certs build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+```
+
+> ⚠️ **Armadilha do Windows:** editores gravam `key.properties` com marca de
+> ordem de bytes (BOM), e aí o Java lê a primeira chave com o marcador colado
+> no nome — ela some. O Gradle agora acusa isso com mensagem explícita em vez
+> de `null cannot be cast to non-null type kotlin.String`.
+
+> ⚠️ Perder o `.jks` significa nunca mais atualizar o app na loja. Ao publicar,
+> aceite o **Play App Signing**: o Google passa a guardar a chave real e a sua
+> vira chave de upload, que eles conseguem resetar.
 
 ### Pendente antes do primeiro envio à loja
 
 - [ ] **`applicationId` definitivo** — é permanente após publicar. Hoje está
       `com.routely.routely` em [build.gradle.kts](android/app/build.gradle.kts).
       Não precisa ser um domínio seu; o Google não verifica isso.
-- [ ] **Keystore de release** — a loja recusa AAB assinado com chave de debug.
-      Modelo e comando em [key.properties.example](android/key.properties.example).
-      ⚠️ Perder o `.jks` significa nunca mais atualizar o app.
 - [ ] Screenshots, descrição e gráfico de destaque (1024×500).
+- [x] ~~Keystore de release~~
 - [x] ~~Ícone~~
 - [x] ~~[Política de privacidade](https://lenonronaldo2014-prog.github.io/Routely/)~~ —
       servida pelo GitHub Pages a partir de [docs/](docs/)
