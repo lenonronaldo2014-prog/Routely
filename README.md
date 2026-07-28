@@ -4,6 +4,14 @@ App de roteirização para entregador autônomo. Você cadastra os endereços do
 e ele monta alternativas de rota a partir de onde você está — com tempo e
 distância de cada uma — para **você** escolher qual fazer.
 
+**[⬇️ Baixar o APK](https://github.com/lenonronaldo2014-prog/Routely/releases/latest)**
+ · [Política de privacidade](https://lenonronaldo2014-prog.github.io/Routely/)
+
+> A versão publicada nas releases está assinada com chave de desenvolvimento.
+> Instala e funciona, mas quando o app for para a Play Store será preciso
+> desinstalá-la antes — o Android bloqueia atualização entre assinaturas
+> diferentes. Exporte os dados antes, em *Configurações → Meus dados*.
+
 ## A ideia central
 
 A maioria dos apps de roteirização cospe uma rota "ótima" e pronto. O Routely
@@ -491,17 +499,32 @@ essencial pode encostar na borda.
 > A ficha da loja também precisa de um **ícone próprio, 512×512**, separado do
 > ícone do app.
 
-### Pendente antes do primeiro envio
+### Distribuição fora da loja
+
+O build de release funciona sem keystore própria: cai na chave de debug, que
+instala normalmente em qualquer aparelho. Só a Play Store recusa.
+
+```bash
+flutter build apk --release --split-per-abi
+```
+
+Gera três APKs. O `arm64-v8a` (~32 MB) cobre praticamente todo Android atual;
+o universal (~85 MB) funciona em qualquer um.
+
+### Pendente antes do primeiro envio à loja
 
 - [ ] **`applicationId` definitivo** — é permanente após publicar. Hoje está
       `com.routely.routely` em [build.gradle.kts](android/app/build.gradle.kts).
+      Não precisa ser um domínio seu; o Google não verifica isso.
 - [ ] **Keystore de release** — a loja recusa AAB assinado com chave de debug.
-- [ ] **Política de privacidade** — URL pública obrigatória. Precisa declarar
-      localização e câmera.
-- [ ] **Formulário de Segurança de Dados** — localização e câmera usadas no
-      app, não compartilhadas, não saem do aparelho.
-- [ ] Screenshots e descrição.
+      Modelo e comando em [key.properties.example](android/key.properties.example).
+      ⚠️ Perder o `.jks` significa nunca mais atualizar o app.
+- [ ] Screenshots, descrição e gráfico de destaque (1024×500).
 - [x] ~~Ícone~~
+- [x] ~~[Política de privacidade](https://lenonronaldo2014-prog.github.io/Routely/)~~ —
+      servida pelo GitHub Pages a partir de [docs/](docs/)
+- [x] ~~Formulário de Segurança de Dados~~ — respostas prontas em
+      [docs/play-store-data-safety.md](docs/play-store-data-safety.md)
 
 ## Roadmap
 
