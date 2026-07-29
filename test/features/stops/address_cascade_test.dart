@@ -10,19 +10,20 @@ import 'package:routely/features/stops/domain/entities/address_lookup.dart';
 import 'package:routely/features/stops/domain/entities/address_query.dart';
 import 'package:routely/features/stops/domain/entities/cep_pack.dart';
 
-/// O caso que motivou a cascata: um endereço real que o Nominatim não conhece
-/// pelo número. Antes disso o app desistia e abria o mapa na localização do
-/// usuário, que podia estar do outro lado da cidade.
+/// Endereço real de cidade pequena que o OpenStreetMap não mapeia: nem a rua,
+/// nem o CEP, nem o bairro respondem. Foi o caso que expôs o problema — antes
+/// da cascata o app desistia e abria o mapa na localização do usuário, que
+/// podia estar do outro lado do estado.
 const _query = AddressQuery(
   cep: '18320-620',
-  street: 'Rua Alcídia Amaral de Moraes',
-  number: '822',
-  neighborhood: 'Jardim Bela Vista',
-  city: 'Boituva',
+  street: 'Rua Carlos Ollig',
+  number: '20',
+  neighborhood: 'Pinheiros',
+  city: 'Apiaí',
   state: 'SP',
 );
 
-const _found = GeoPoint(latitude: -23.2833, longitude: -47.6722);
+const _found = GeoPoint(latitude: -24.50765, longitude: -48.84616);
 
 /// Geocoder que só responde às buscas listadas em [answers]; qualquer outra
 /// levanta exceção, como o Nominatim faz quando não acha nada.
@@ -40,8 +41,11 @@ class _FakeRemote implements AddressRemoteDataSource {
   Future<AddressLookup> lookupCep(String cep) async =>
       throw UnimplementedError();
 
+  /// Texto livre serve a dois degraus: o endereço com número e o bairro. O
+  /// que os separa é o número aparecer ou não na frase.
   @override
-  Future<GeoPoint> geocode(String fullAddress) async => _reply('freeText');
+  Future<GeoPoint> geocode(String fullAddress) async =>
+      _reply(fullAddress.contains(_query.number!) ? 'freeText' : 'neighborhood');
 
   @override
   Future<GeoPoint> geocodeStructured({
@@ -51,10 +55,7 @@ class _FakeRemote implements AddressRemoteDataSource {
     String? postalCode,
   }) async {
     if (postalCode != null) return _reply('postalCode');
-    if (street != null && street.isNotEmpty) {
-      // Bairro e rua chegam pelo mesmo campo — o rótulo os separa.
-      return _reply(street == _query.street ? 'street' : 'neighborhood');
-    }
+    if (street != null && street.isNotEmpty) return _reply('street');
     return _reply('city');
   }
 
@@ -64,6 +65,34 @@ class _FakeRemote implements AddressRemoteDataSource {
       throw GeocodingException('Endereço não localizado no mapa.');
     }
     return _found;
+  }
+}
+
+/// Nunca acha nada, mas guarda como cada degrau foi perguntado. Serve para
+/// checar a forma da consulta, não o resultado.
+class _SpyRemote implements AddressRemoteDataSource {
+  final freeTextQueries = <String>[];
+  final structuredStreets = <String>[];
+
+  @override
+  Future<AddressLookup> lookupCep(String cep) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<GeoPoint> geocode(String fullAddress) async {
+    freeTextQueries.add(fullAddress);
+    throw GeocodingException('nada');
+  }
+
+  @override
+  Future<GeoPoint> geocodeStructured({
+    String? street,
+    String? city,
+    String? state,
+    String? postalCode,
+  }) async {
+    if (street != null) structuredStreets.add(street);
+    throw GeocodingException('nada');
   }
 }
 
@@ -96,9 +125,9 @@ class _FakeDirectory implements CepDirectoryLocalDataSource {
     if (coordinate == null) return null;
     return AddressLookup(
       cep: cep,
-      street: 'Rua Alcídia Amaral de Moraes',
-      neighborhood: 'Jardim Bela Vista',
-      city: 'Boituva',
+      street: 'Rua Carlos Ollig',
+      neighborhood: 'Pinheiros',
+      city: 'Apiaí',
       state: 'SP',
       coordinate: coordinate,
       source: AddressSource.localDirectory,
@@ -131,7 +160,7 @@ class _FakeNetwork implements NetworkInfo {
 }
 
 AddressRepositoryImpl _repository({
-  required _FakeRemote remote,
+  required AddressRemoteDataSource remote,
   _FakeCache? cache,
   GeoPoint? directoryPoint,
   bool connected = true,
@@ -178,6 +207,26 @@ void main() {
 
       expect(result?.precision, LocationPrecision.neighborhood);
       expect(remote.calls, ['freeText', 'street', 'postalCode', 'neighborhood']);
+    });
+
+    // O Nominatim não tem campo para bairro. Pedir bairro em `street` faz ele
+    // procurar uma via com aquele nome e devolver vazio — verificado contra o
+    // serviço real: "Bela Vista, São Paulo" acha por texto livre e não acha
+    // no estruturado. Este teste existe para o degrau não voltar a ser
+    // estruturado por parecer mais organizado.
+    test('o bairro é buscado por texto livre, não estruturado', () async {
+      final remote = _SpyRemote();
+      await _repository(remote: remote).locateApproximate(_query);
+
+      expect(
+        remote.freeTextQueries,
+        contains('Pinheiros, Apiaí, SP, Brasil'),
+      );
+      expect(
+        remote.structuredStreets,
+        isNot(contains('Pinheiros')),
+        reason: 'bairro no campo street pede uma via, e não acha nada',
+      );
     });
 
     test('último recurso é a cidade', () async {

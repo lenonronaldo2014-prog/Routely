@@ -196,13 +196,20 @@ class AddressRepositoryImpl implements AddressRepository {
           LocationPrecision.postalCode,
           () => remoteDataSource.geocodeStructured(postalCode: cep),
         ),
+      // Texto livre, e não busca estruturada: o Nominatim não tem campo para
+      // bairro, e enfiá-lo em `street` pede uma via com aquele nome — que não
+      // existe. Verificado: "Bela Vista, São Paulo" acha o bairro por texto
+      // livre e devolve vazio no estruturado.
       if (query.hasNeighborhood && query.hasCity)
         _Attempt(
           LocationPrecision.neighborhood,
-          () => remoteDataSource.geocodeStructured(
-            street: query.neighborhood,
-            city: query.city,
-            state: query.state,
+          () => remoteDataSource.geocode(
+            [
+              query.neighborhood!.trim(),
+              query.city!.trim(),
+              if ((query.state ?? '').trim().isNotEmpty) query.state!.trim(),
+              'Brasil',
+            ].join(', '),
           ),
         ),
       if (query.hasCity)
