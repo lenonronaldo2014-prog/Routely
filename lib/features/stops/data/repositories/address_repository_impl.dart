@@ -7,6 +7,7 @@ import '../../../../core/network/network_info.dart';
 import '../../../../core/util/cep_formatter.dart';
 import '../../../../core/util/cep_range_resolver.dart';
 import '../../domain/entities/address_lookup.dart';
+import '../../domain/entities/address_query.dart';
 import '../../domain/repositories/address_repository.dart';
 import '../datasources/address_local_data_source.dart';
 import '../datasources/address_remote_data_source.dart';
@@ -18,12 +19,17 @@ class AddressRepositoryImpl implements AddressRepository {
   final CepDirectoryLocalDataSource directoryDataSource;
   final NetworkInfo networkInfo;
 
+  /// Espera entre os degraus da cascata. Injetável só para o teste não gastar
+  /// segundos de verdade esperando.
+  final Duration _cascadeDelay;
+
   AddressRepositoryImpl({
     required this.remoteDataSource,
     required this.localDataSource,
     required this.directoryDataSource,
     required this.networkInfo,
-  });
+    Duration cascadeDelay = const Duration(seconds: 1),
+  }) : _cascadeDelay = cascadeDelay;
 
   /// Ordem de consulta, do mais barato e confiável para o mais caro:
   ///
@@ -106,6 +112,148 @@ class AddressRepositoryImpl implements AddressRepository {
     ));
   }
 
+  /// Vai afrouxando a busca até algo responder, e conta em que degrau parou.
+  ///
+  /// Antes daqui, um endereço não encontrado caía na localização do próprio
+  /// usuário — que podia estar a quilômetros. Errar por 200m dentro do bairro
+  /// certo é outra história: ele arrasta o pin e segue.
+  @override
+  Future<ApproximateLocation?> locateApproximate(AddressQuery query) async {
+    if (query.isEmpty) return null;
+
+    final cep = query.normalizedCep;
+
+    // Endereço repetido não precisa de rede. Só o resultado exato é guardado,
+    // então um acerto no cache é sempre exato — nunca um bairro se passando
+    // por porta.
+    final cacheKey = AddressLocalDataSourceImpl.buildAddressKey(query.fullText);
+    final cached = await _cachedGeocode(cacheKey);
+    if (cached != null) {
+      return ApproximateLocation(
+        point: cached,
+        precision: LocationPrecision.exact,
+      );
+    }
+
+    // Sem rua, o CEP já é o mais específico possível: a base local resolve na
+    // hora, sem gastar requisição.
+    if (!query.hasStreet && cep != null) {
+      final local = await _directoryPoint(cep);
+      if (local != null) {
+        return ApproximateLocation(
+          point: local,
+          precision: LocationPrecision.postalCode,
+        );
+      }
+    }
+
+    if (await networkInfo.isConnected) {
+      final found = await _geocodeCascade(query, cep, cacheKey);
+      if (found != null) return found;
+    }
+
+    // Sem rede, ou nada respondeu: o centroide do CEP ainda coloca o usuário
+    // no lugar certo do mapa. É a razão de a base local existir.
+    if (cep != null) {
+      final local = await _directoryPoint(cep);
+      if (local != null) {
+        return ApproximateLocation(
+          point: local,
+          precision: LocationPrecision.postalCode,
+        );
+      }
+    }
+
+    return null;
+  }
+
+  /// Cada degrau pede menos ao geocoder que o anterior: número, rua, CEP,
+  /// bairro, cidade. Para no primeiro que responder.
+  Future<ApproximateLocation?> _geocodeCascade(
+    AddressQuery query,
+    String? cep,
+    String cacheKey,
+  ) async {
+    final hasNumber = (query.number ?? '').trim().isNotEmpty;
+
+    final attempts = <_Attempt>[
+      if (query.hasStreet && hasNumber)
+        _Attempt(
+          LocationPrecision.exact,
+          () => remoteDataSource.geocode(query.fullText),
+        ),
+      if (query.hasStreet)
+        _Attempt(
+          LocationPrecision.street,
+          () => remoteDataSource.geocodeStructured(
+            street: query.street,
+            city: query.city,
+            state: query.state,
+          ),
+        ),
+      if (cep != null)
+        _Attempt(
+          LocationPrecision.postalCode,
+          () => remoteDataSource.geocodeStructured(postalCode: cep),
+        ),
+      if (query.hasNeighborhood && query.hasCity)
+        _Attempt(
+          LocationPrecision.neighborhood,
+          () => remoteDataSource.geocodeStructured(
+            street: query.neighborhood,
+            city: query.city,
+            state: query.state,
+          ),
+        ),
+      if (query.hasCity)
+        _Attempt(
+          LocationPrecision.city,
+          () => remoteDataSource.geocodeStructured(
+            city: query.city,
+            state: query.state,
+          ),
+        ),
+    ];
+
+    for (var i = 0; i < attempts.length; i++) {
+      // O Nominatim pede no máximo uma consulta por segundo. Disparar a
+      // cascata inteira de uma vez é o caminho curto para levar bloqueio.
+      if (i > 0) await Future<void>.delayed(_cascadeDelay);
+
+      final attempt = attempts[i];
+      try {
+        final point = await attempt.run();
+        if (!point.isValid) continue;
+
+        if (attempt.precision == LocationPrecision.exact) {
+          await _cacheGeocodeQuietly(cacheKey, point);
+        }
+
+        return ApproximateLocation(point: point, precision: attempt.precision);
+      } catch (_) {
+        // Esse degrau não respondeu — tenta o próximo, mais amplo.
+      }
+    }
+
+    return null;
+  }
+
+  Future<GeoPoint?> _cachedGeocode(String key) async {
+    try {
+      return await localDataSource.getCachedGeocode(key);
+    } on CacheException {
+      return null;
+    }
+  }
+
+  Future<GeoPoint?> _directoryPoint(String cep) async {
+    final lookup = await _tryDirectory(cep);
+    if (lookup == null || !lookup.hasCoordinate) return null;
+
+    final point = lookup.coordinate;
+    return point != null && point.isValid ? point : null;
+  }
+
   @override
   Future<GeoPoint?> coordinateFromDirectory(String cep) async {
     final normalized = CepFormatter.normalize(cep);
@@ -160,4 +308,12 @@ class AddressRepositoryImpl implements AddressRepository {
       // Ignorado de propósito.
     }
   }
+}
+
+/// Um degrau da cascata: o que buscar e quanta precisão o acerto representa.
+class _Attempt {
+  final LocationPrecision precision;
+  final Future<GeoPoint> Function() run;
+
+  _Attempt(this.precision, this.run);
 }

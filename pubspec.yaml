@@ -2,7 +2,10 @@ name: routely
 description: "Routely — organize suas entregas e descubra a melhor rota."
 publish_to: 'none'
 
-version: 1.0.0+1
+# O número após o `+` é o versionCode do Android e só pode subir. As três
+# primeiras releases saíram todas como `+1` — daqui em diante ele acompanha a
+# contagem de releases, para nunca haver dois APKs com o mesmo código.
+version: 1.0.3+4
 
 environment:
   sdk: ^3.11.3

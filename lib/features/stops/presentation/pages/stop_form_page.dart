@@ -10,6 +10,7 @@ import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/responsive_body.dart';
 import '../../../../injection_container.dart';
 import '../../domain/entities/address_lookup.dart';
+import '../../domain/entities/address_query.dart';
 import '../../domain/entities/delivery_stop.dart';
 import '../../domain/entities/scanned_address.dart';
 import '../bloc/stop_form_bloc.dart';
@@ -175,8 +176,7 @@ class _StopFormViewState extends State<_StopFormView> {
           // Só o pino marcado à mão tem prioridade sobre o endereço digitado.
           initial: state.pickedCoordinate,
           fallback: state.existing?.coordinate,
-          addressToLocate: _typedFullAddress(),
-          cepToLocate: CepFormatter.normalize(_cep.text),
+          query: _typedQuery(),
           addressLabel: label,
         ),
       ),
@@ -186,22 +186,18 @@ class _StopFormViewState extends State<_StopFormView> {
   }
 
   /// Monta o endereço com o que está nos campos agora — não o que foi salvo.
-  String _typedFullAddress() {
-    final street = _street.text.trim();
-    if (street.isEmpty) return '';
-
-    final number = _number.text.trim();
-
-    final parts = <String>[
-      number.isEmpty ? street : '$street, $number',
-      if (_neighborhood.text.trim().isNotEmpty) _neighborhood.text.trim(),
-      if (_city.text.trim().isNotEmpty) _city.text.trim(),
-      if (_state.text.trim().isNotEmpty) _state.text.trim(),
-      'Brasil',
-    ];
-
-    return parts.join(', ');
-  }
+  ///
+  /// Os campos vão separados porque a tela do mapa afrouxa a busca em degraus
+  /// quando o endereço exato não é encontrado, e para isso precisa saber qual
+  /// parte é rua, qual é bairro e qual é cidade.
+  AddressQuery _typedQuery() => AddressQuery(
+        cep: CepFormatter.normalize(_cep.text),
+        street: _street.text.trim(),
+        number: _number.text.trim(),
+        neighborhood: _neighborhood.text.trim(),
+        city: _city.text.trim(),
+        state: _state.text.trim(),
+      );
 
   void _submit() {
     if (!_formKey.currentState!.validate()) return;

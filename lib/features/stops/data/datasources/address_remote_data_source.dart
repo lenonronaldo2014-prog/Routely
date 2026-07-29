@@ -12,6 +12,19 @@ abstract class AddressRemoteDataSource {
 
   /// Endereço em texto -> coordenada.
   Future<GeoPoint> geocode(String fullAddress);
+
+  /// Busca por campos separados.
+  ///
+  /// O Nominatim acerta bem mais assim do que com tudo colado numa frase:
+  /// informar "esta parte é rua, esta é cidade" evita que ele interprete o
+  /// nome do bairro como nome de rua, por exemplo. É o que permite achar a rua
+  /// quando o número não existe no mapa.
+  Future<GeoPoint> geocodeStructured({
+    String? street,
+    String? city,
+    String? state,
+    String? postalCode,
+  });
 }
 
 class AddressRemoteDataSourceImpl implements AddressRemoteDataSource {
@@ -59,9 +72,35 @@ class AddressRemoteDataSourceImpl implements AddressRemoteDataSource {
   }
 
   @override
-  Future<GeoPoint> geocode(String fullAddress) async {
+  Future<GeoPoint> geocode(String fullAddress) {
+    return _search({'q': fullAddress});
+  }
+
+  @override
+  Future<GeoPoint> geocodeStructured({
+    String? street,
+    String? city,
+    String? state,
+    String? postalCode,
+  }) {
+    final params = <String, String>{
+      if (street != null && street.trim().isNotEmpty) 'street': street.trim(),
+      if (city != null && city.trim().isNotEmpty) 'city': city.trim(),
+      if (state != null && state.trim().isNotEmpty) 'state': state.trim(),
+      if (postalCode != null && postalCode.trim().isNotEmpty)
+        'postalcode': postalCode.trim(),
+    };
+
+    if (params.isEmpty) {
+      throw GeocodingException('Nada para buscar.');
+    }
+
+    return _search(params);
+  }
+
+  Future<GeoPoint> _search(Map<String, String> query) async {
     final uri = Uri.parse(_nominatimBase).replace(queryParameters: {
-      'q': fullAddress,
+      ...query,
       'format': 'jsonv2',
       'limit': '1',
       'countrycodes': 'br',

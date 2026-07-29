@@ -15,6 +15,7 @@ import '../../../routing/presentation/pages/active_route_page.dart';
 import '../../../routing/presentation/pages/route_options_page.dart';
 import '../../../routing/presentation/widgets/active_route_card.dart';
 import '../../../settings/presentation/pages/settings_page.dart';
+import '../../domain/entities/address_query.dart';
 import '../../domain/entities/delivery_stop.dart';
 import '../../domain/entities/scanned_address.dart';
 import '../bloc/stops_bloc.dart';
@@ -453,8 +454,14 @@ class _StopsList extends StatelessWidget {
           // Estas paradas chegam aqui justamente porque o geocoding falhou no
           // salvamento. Mandar o endereço de novo dá uma segunda chance — e a
           // base de CEP local costuma resolver sem rede.
-          addressToLocate: stop.fullAddress,
-          cepToLocate: stop.cep,
+          query: AddressQuery(
+            cep: stop.cep,
+            street: stop.street,
+            number: stop.number,
+            neighborhood: stop.neighborhood,
+            city: stop.city,
+            state: stop.state,
+          ),
           addressLabel: stop.shortAddress,
         ),
       ),

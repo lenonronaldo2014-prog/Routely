@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:routely/core/error/failures.dart';
 import 'package:routely/core/geo/geo_point.dart';
 import 'package:routely/features/stops/domain/entities/address_lookup.dart';
+import 'package:routely/features/stops/domain/entities/address_query.dart';
 import 'package:routely/features/stops/domain/entities/delivery_stop.dart';
 import 'package:routely/features/stops/domain/repositories/address_repository.dart';
 import 'package:routely/features/stops/domain/repositories/stops_repository.dart';
@@ -73,6 +74,10 @@ class _StubAddressRepository implements AddressRepository {
 
   @override
   Future<GeoPoint?> coordinateFromDirectory(String cep) async => null;
+
+  @override
+  Future<ApproximateLocation?> locateApproximate(AddressQuery query) async =>
+      null;
 }
 
 const _pinned = GeoPoint(latitude: -23.5613, longitude: -46.6560);

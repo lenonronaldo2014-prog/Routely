@@ -10,6 +10,7 @@ import '../../../../core/usecases/usecase.dart';
 import '../../../../core/widgets/responsive_body.dart';
 import '../../../../injection_container.dart';
 import '../../../location/domain/usecases/get_current_location.dart';
+import '../../domain/entities/address_query.dart';
 import '../../domain/repositories/address_repository.dart';
 
 /// De onde veio o ponto onde o mapa abriu. A tela avisa o usuário, porque
@@ -31,12 +32,13 @@ class LocationPickerPage extends StatefulWidget {
   /// para localizar o endereço digitado agora.
   final GeoPoint? fallback;
 
-  /// Endereço digitado no formulário, para o mapa abrir perto dele.
-  final String? addressToLocate;
-
-  /// CEP digitado. Resolve pela base local, sem rede e sem custo — por isso é
-  /// tentado antes do geocoding online.
-  final String? cepToLocate;
+  /// Endereço digitado no formulário, em campos separados, para o mapa abrir
+  /// o mais perto possível dele.
+  ///
+  /// Separado e não colado numa frase porque a busca vai afrouxando: quando o
+  /// número não existe no mapa, ainda dá para achar a rua; depois o CEP, o
+  /// bairro, a cidade.
+  final AddressQuery? query;
 
   final String addressLabel;
 
@@ -44,8 +46,7 @@ class LocationPickerPage extends StatefulWidget {
     super.key,
     this.initial,
     this.fallback,
-    this.addressToLocate,
-    this.cepToLocate,
+    this.query,
     required this.addressLabel,
   });
 
@@ -70,6 +71,11 @@ class _LocationPickerPageState extends State<LocationPickerPage> {
   LatLng? _pin;
   double _initialZoom = _countryZoom;
   _StartOrigin _origin = _StartOrigin.country;
+
+  /// Quanto do endereço a busca conseguiu casar. Só existe quando o ponto veio
+  /// do endereço digitado — e é o que permite a tela dizer se falta ajustar o
+  /// número ou o bairro inteiro.
+  LocationPrecision? _precision;
 
   bool _isLocating = false;
   bool _isResolving = true;
@@ -98,10 +104,15 @@ class _LocationPickerPageState extends State<LocationPickerPage> {
   /// O passo 2 é o que faltava: antes o mapa abria no ponto antigo mesmo
   /// quando o endereço tinha mudado, e o usuário precisava procurar o lugar na
   /// mão.
+  ///
+  /// O passo 2 também não é tudo-ou-nada. Se o número não for encontrado, a
+  /// busca afrouxa até a rua, o CEP, o bairro. Cair no passo 4 — a localização
+  /// do próprio usuário — significaria abrir o mapa possivelmente a
+  /// quilômetros do destino, e é o que se tenta evitar até o fim.
   Future<void> _resolveStartingPoint() async {
     final manual = widget.initial;
     if (manual != null && manual.isValid) {
-      _start(manual, _StartOrigin.pin);
+      _start(manual, _StartOrigin.pin, zoom: _addressZoom);
       return;
     }
 
@@ -109,13 +120,18 @@ class _LocationPickerPageState extends State<LocationPickerPage> {
     if (!mounted) return;
 
     if (fromAddress != null) {
-      _start(fromAddress, _StartOrigin.address);
+      _start(
+        fromAddress.point,
+        _StartOrigin.address,
+        zoom: fromAddress.precision.zoom,
+        precision: fromAddress.precision,
+      );
       return;
     }
 
     final saved = widget.fallback;
     if (saved != null && saved.isValid) {
-      _start(saved, _StartOrigin.saved);
+      _start(saved, _StartOrigin.saved, zoom: _addressZoom);
       return;
     }
 
@@ -123,7 +139,7 @@ class _LocationPickerPageState extends State<LocationPickerPage> {
     if (!mounted) return;
 
     if (current != null) {
-      _start(current, _StartOrigin.gps);
+      _start(current, _StartOrigin.gps, zoom: _addressZoom);
       return;
     }
 
@@ -135,31 +151,28 @@ class _LocationPickerPageState extends State<LocationPickerPage> {
     });
   }
 
-  void _start(GeoPoint point, _StartOrigin origin) {
+  void _start(
+    GeoPoint point,
+    _StartOrigin origin, {
+    required double zoom,
+    LocationPrecision? precision,
+  }) {
     setState(() {
       _pin = LatLng(point.latitude, point.longitude);
-      _initialZoom = _addressZoom;
+      _initialZoom = zoom;
       _origin = origin;
+      _precision = precision;
       _isResolving = false;
     });
   }
 
-  /// Tenta a base de CEP local primeiro: é instantânea, funciona sem rede e
-  /// não custa requisição.
-  Future<GeoPoint?> _locateTypedAddress() async {
-    final repository = sl<AddressRepository>();
+  /// Delega a cascata ao repositório: base de CEP, endereço com número, rua,
+  /// CEP, bairro, cidade — o primeiro que responder.
+  Future<ApproximateLocation?> _locateTypedAddress() async {
+    final query = widget.query;
+    if (query == null || query.isEmpty) return null;
 
-    final cep = widget.cepToLocate;
-    if (cep != null && cep.isNotEmpty) {
-      final fromCep = await repository.coordinateFromDirectory(cep);
-      if (fromCep != null && fromCep.isValid) return fromCep;
-    }
-
-    final address = widget.addressToLocate;
-    if (address == null || address.trim().isEmpty) return null;
-
-    final result = await repository.geocode(address);
-    return result.fold((_) => null, (point) => point.isValid ? point : null);
+    return sl<AddressRepository>().locateApproximate(query);
   }
 
   Future<GeoPoint?> _currentLocation() async {
@@ -303,7 +316,11 @@ class _LocationPickerPageState extends State<LocationPickerPage> {
             ],
           ),
 
-          _Header(label: widget.addressLabel, origin: _origin),
+          _Header(
+            label: widget.addressLabel,
+            origin: _origin,
+            precision: _precision,
+          ),
 
           Positioned(
             right: AppSpacing.md,
@@ -357,7 +374,7 @@ class _LocationPickerPageState extends State<LocationPickerPage> {
               ),
               const SizedBox(height: AppSpacing.xxs),
               Text(
-                'Se não achar, abre onde você está',
+                'Se o número não existir no mapa, abre na rua ou no bairro',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 13, color: c.textTertiary),
               ),
@@ -444,7 +461,14 @@ class _Header extends StatelessWidget {
   final String label;
   final _StartOrigin origin;
 
-  const _Header({required this.label, required this.origin});
+  /// Só vem preenchida quando o ponto saiu do endereço digitado.
+  final LocationPrecision? precision;
+
+  const _Header({
+    required this.label,
+    required this.origin,
+    this.precision,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -456,11 +480,36 @@ class _Header extends StatelessWidget {
           'Este é o ponto que você marcou antes',
           c.textTertiary,
         ),
-      _StartOrigin.address => (
-          Icons.place_rounded,
-          'Achei este endereço. Toque na porta certa para ajustar',
-          c.textTertiary,
-        ),
+      // Dizer só "achei este endereço" depois de casar apenas a cidade seria
+      // mentira, e o usuário confirmaria um ponto errado achando que estava
+      // certo. Cada precisão pede um aviso do tamanho do erro que ela carrega.
+      _StartOrigin.address => switch (precision ?? LocationPrecision.exact) {
+          LocationPrecision.exact => (
+              Icons.place_rounded,
+              'Achei este endereço. Toque na porta certa para ajustar',
+              c.textTertiary,
+            ),
+          LocationPrecision.street => (
+              Icons.signpost_rounded,
+              'Achei a rua, mas não o número. Toque na porta certa',
+              c.warning,
+            ),
+          LocationPrecision.postalCode => (
+              Icons.markunread_mailbox_rounded,
+              'Este é o ponto do CEP. Toque na porta certa para ajustar',
+              c.warning,
+            ),
+          LocationPrecision.neighborhood => (
+              Icons.holiday_village_rounded,
+              'Achei só o bairro. Aproxime e toque na porta certa',
+              c.warning,
+            ),
+          LocationPrecision.city => (
+              Icons.location_city_rounded,
+              'Achei só a cidade. Aproxime e toque no local da entrega',
+              c.warning,
+            ),
+        },
       _StartOrigin.saved => (
           Icons.history_rounded,
           'Ponto salvo antes. Toque no mapa para corrigir',
