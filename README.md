@@ -32,7 +32,8 @@ Funciona ponta a ponta, **sem nenhuma API key**:
 
 - Cadastro de entrega com busca automática de CEP (ViaCEP)
 - **CEP offline** — base por estado + dedução da UF pela faixa numérica
-- Geocoding via Nominatim/OpenStreetMap
+- **Autocomplete de endereço** — sugestões com coordenada, debounce de 400ms
+- Geocoding via Geoapify, com Nominatim/OpenStreetMap como plano B
 - Cálculo das 3 rotas a partir do GPS
 - **Roadmap visual** — linha do tempo numerada com a sequência das paradas
 - **Recalcular no meio do caminho** — reordena o que falta de onde você está
@@ -58,19 +59,71 @@ sorte:
 | Navegar até o ponto | Delega ao Google Maps/Waze do usuário | Zero |
 | GPS | Do aparelho | Zero |
 | CEP → endereço | Base offline, depois ViaCEP | Zero |
-| **Endereço → coordenada** | **Centroide do CEP na base local** | **Zero** |
+| **Endereço → coordenada** | **Geoapify (plano gratuito), cache no banco** | **Zero** |
 | Não perder dados | Backup do Android + export manual | Zero |
 
-O único ponto que escalaria em custo era o geocoding. A saída é a coordenada
-vir do próprio CEP: com `latitude` e `longitude` na base local, converter
-endereço em ponto vira uma consulta no SQLite.
+O único ponto que escalaria em custo é o geocoding. Ele é gratuito aqui por
+duas razões: o plano gratuito do Geoapify dá 3000 consultas por dia, e o app é
+construído para gastar o mínimo possível delas.
 
-O centroide do CEP erra uns 100-200m em área urbana — o que **não muda a ordem
-das paradas**, que é o que o app decide. Para navegar, quem manda é o Google
-Maps, que recebe o endereço e resolve por conta própria.
+### Por que Geoapify e não OpenStreetMap
 
-`StopsRepositoryImpl.saveStop` tenta nesta ordem: base local → geocoding online
-→ nada (e a parada fica marcada para o usuário ajustar no mapa).
+O OSM não cobre cidade pequena no Brasil. Medido contra o Nominatim, o endereço
+**Rua Carlos Olig, 20, Apiaí/SP** não existe lá em nenhuma forma de consulta:
+
+| Consulta | Nominatim | Geoapify |
+|---|---|---|
+| rua + número | `[]` | prédio exato |
+| só a rua | `[]` | — |
+| CEP 18320-620 | `[]` | — |
+| bairro | `[]` | — |
+| cidade | achou | — |
+
+O melhor que o Nominatim conseguia era o centro de Apiaí, a 1,6 km do destino.
+O Geoapify devolve `-24.49358, -48.84348`, na quadra certa.
+
+O Nominatim continua no projeto como **plano B**, com a cascata inteira. Ficar
+sem geocoding é pior que geocodificar mal.
+
+### Como a cota gratuita é suficiente
+
+| Medida | Efeito |
+|---|---|
+| Geocodifica uma vez, no cadastro, e grava | Recalcular a rota não consulta nada |
+| Cache no banco por endereço, com a precisão | Endereço repetido é grátis |
+| Debounce de 400ms no autocomplete | "Avenida Paulista" custa 1 consulta, não 16 |
+| Texto repetido sai da memória | Apagar e redigitar não consulta |
+| Menos de 4 letras não consulta | Devolveria o Brasil inteiro |
+| A sugestão escolhida já traz a coordenada | Salvar a parada não consulta |
+| Teto diário abaixo do limite do plano | Cai no plano B antes de o provedor recusar |
+
+`StopsRepositoryImpl.saveStop` grava a coordenada uma vez. O cálculo de rota lê
+o banco e **nunca** geocodifica — seria pagar toda vez que o entregador
+recalcula o roteiro, várias vezes por dia, pelo mesmo endereço.
+
+Resultado de nível cidade é recusado no salvamento. Um erro de quarteirões não
+muda a ordem das paradas; o centroide da cidade colocaria bairros opostos no
+mesmo ponto e produziria um roteiro que parece calculado e está errado.
+
+### A chave da API
+
+Fica em `geoapify.json` na raiz, que está no `.gitignore`. Copie de
+`geoapify.example.json` e compile assim:
+
+```
+flutter build apk --release --dart-define-from-file=geoapify.json
+```
+
+**Sem o arquivo o app compila e funciona igual**, usando o Nominatim. Um clone
+do repositório não vira um app quebrado.
+
+Chave embarcada em APK pode ser extraída por quem descompactar o arquivo. Isso
+é aceito de propósito: o plano gratuito do Geoapify não cobra excedente, ele
+para de responder — então uma chave vazada causa indisponibilidade, não conta a
+pagar, e o app cai no Nominatim. Se um dia valer esconder a chave, existe
+`GEOAPIFY_PROXY`: apontando para um servidor próprio (um Cloudflare Worker
+serve, e é gratuito), o app deixa de mandar chave nenhuma. É mudança de
+configuração, não de código.
 
 ## Histórico e backup
 
@@ -188,17 +241,49 @@ Geocoding falha — e falha **com internet**. Num teste com 4 endereços reais d
 São Paulo, um não foi encontrado. Como o fluxo é "cadastra de manhã com sinal,
 roda o dia sem", um endereço que falha vira buraco no roteiro inteiro.
 
-A saída é o mapa: [location_picker_page.dart](lib/features/stops/presentation/pages/location_picker_page.dart).
+### Não achou o número? Abre perto, não longe
 
-- **O pino fica travado no centro e quem se move é o mapa.** Arrastar um
-  alfinete pequeno com o dedo em cima dele é impreciso — o dedo tapa justamente
-  o ponto que se quer enxergar.
+Antes, um endereço não encontrado caía na localização do próprio usuário — que
+podia estar do outro lado da cidade. A busca agora afrouxa em degraus e conta
+em qual parou:
+
+| Precisão | Zoom | O que a tela diz |
+|---|---|---|
+| `exact` | 18 | "Achei este endereço. Toque na porta certa para ajustar" |
+| `street` | 17 | "Achei a rua, mas não o número" |
+| `postalCode` | 17 | "Este é o ponto do CEP" |
+| `neighborhood` | 15 | "Achei só o bairro" |
+| `city` | 13 | "Achei só a cidade" |
+
+O aviso muda junto porque prometer precisão que não existe faz o usuário
+confirmar um ponto errado achando que estava conferido. Errar 200m dentro do
+bairro certo é outra história: ele arrasta o pino e segue.
+
+### O mapa
+
+[location_picker_page.dart](lib/features/stops/presentation/pages/location_picker_page.dart).
+
+- **Tocar no mapa põe o pino ali, e o pino também pode ser arrastado.** Tocar é
+  mais preciso; arrastar é o gesto que a maioria espera. Ter os dois evita a
+  frustração de descobrir qual é o certo.
+- **O pino sobe 56px em relação ao dedo enquanto é arrastado** — sem isso o dedo
+  tapa justamente a ponta, que é o ponto que se quer enxergar.
 - **Botão de usar a localização atual**, porque o entregador costuma estar na
   região do destino.
 - **A coordenada aparece embaixo** — é o único feedback possível quando os
   tiles ainda não carregaram por falta de sinal.
 - **Rotação desligada**: mapa torto atrapalha quem só quer marcar um ponto, e é
   fácil de disparar sem querer com dois dedos.
+
+Duas armadilhas do Flutter que custaram caro aqui:
+
+- **`GestureDetector` no pino não funciona.** O `flutter_map` disputa o gesto de
+  arraste na arena e ganha, então só o mapa deslizava. A solução é `Listener`,
+  que recebe os eventos de ponteiro sem entrar na disputa.
+- **`onPositionChanged` com `setState` trava o app.** Reconstruía a página
+  inteira a cada quadro do movimento do mapa — o log mostrou "Skipped 133
+  frames" e o Android abriu o diálogo de ANR. Como o pino virou marcador com
+  posição própria, o callback deixou de ser necessário e foi removido.
 
 O ponto marcado à mão **vence o geocoding** — quem marcou estava olhando para a
 porta. A precedência está testada em
@@ -546,19 +631,20 @@ apksigner verify --print-certs build/app/outputs/flutter-apk/app-arm64-v8a-relea
 5. ✅ Recalcular no meio do caminho
 6. **Ajustar o parser com etiquetas de outras transportadoras** — hoje está
    calibrado com Mercado Livre. Shopee, Correios e Amazon têm layouts próprios.
-6. **Autocomplete de endereço** — Google Places com session token, debounce
-   400ms, mínimo 5 caracteres, cache local agressivo
-7. **Geocoding offline** — hoje a coordenada ainda depende do Nominatim. Dá
-   para embarcar o centroide do CEP na própria base e resolver sem rede.
-8. **Mapa com as paradas** — `flutter_map` já está no projeto; falta desenhar a
+6. **Mapa com as paradas** — `flutter_map` já está no projeto; falta desenhar a
    rota e os pinos numerados sobre ele.
 
 ## Rodar
 
 ```bash
 flutter pub get
-flutter run
 flutter test
+
+# Sem chave: funciona pelo Nominatim.
+flutter run
+
+# Com Geoapify (copie geoapify.example.json para geoapify.json antes):
+flutter run --dart-define-from-file=geoapify.json
 ```
 
 ## Dívidas conhecidas
@@ -567,15 +653,20 @@ flutter test
   de celular; usar dois ao mesmo tempo, não. Isso exigiria servidor — e a
   decisão consciente foi manter o custo de operação em zero.
 
-- **Nominatim** tem política de uso de 1 req/s e não é feito para volume. Serve
-  para validar; em produção, self-host ou provider pago.
+- **A cota do Geoapify é por chave, não por usuário.** São 3000 consultas por
+  dia somando todo mundo que instalar o app. As economias descritas acima fazem
+  isso durar bastante, mas com muitos usuários ativos o teto chega — e aí todos
+  caem no plano B ao mesmo tempo. Antes disso valeria pôr o proxy no ar e
+  medir o consumo real por usuário.
+- **Sem autocomplete quando o Geoapify não está disponível.** O Nominatim
+  proíbe autocomplete na própria política de uso, e ser bloqueado lá derrubaria
+  também o geocoding, que importa mais. Sem sugestão, o usuário digita o
+  endereço à mão, como sempre pôde.
 - **2-opt assume matriz simétrica.** Vale para haversine e é aproximadamente
   verdade em malha viária. Com provider fortemente assimétrico (muitas mãos
   únicas), o ganho continua válido mas o delta calculado vira aproximação.
 - **Geocoding ainda falha às vezes**, mesmo com internet. O ajuste manual no
-  mapa cobre o caso, mas depende do usuário perceber. Um geocoder pago (Google,
-  Mapbox) reduziria a frequência — ao custo de uma conta que cresce com a base
-  de usuários, já que a chave de API é do desenvolvedor.
+  mapa cobre o caso, mas depende do usuário perceber.
 
 - **`timeLimit` do geolocator não é confiável.** No emulador, o botão de
   localização girou indefinidamente porque ele não disparou. Corrigido com um
