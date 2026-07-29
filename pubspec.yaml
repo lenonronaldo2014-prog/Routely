@@ -5,7 +5,7 @@ publish_to: 'none'
 # O número após o `+` é o versionCode do Android e só pode subir. As três
 # primeiras releases saíram todas como `+1` — daqui em diante ele acompanha a
 # contagem de releases, para nunca haver dois APKs com o mesmo código.
-version: 1.0.4+5
+version: 1.0.5+6
 
 environment:
   sdk: ^3.11.3

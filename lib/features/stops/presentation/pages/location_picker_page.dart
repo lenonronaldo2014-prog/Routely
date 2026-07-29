@@ -13,10 +13,15 @@ import '../../../location/domain/usecases/get_current_location.dart';
 import '../../domain/entities/address_query.dart';
 import '../../domain/repositories/address_repository.dart';
 
-/// De onde veio o ponto onde o mapa abriu. A tela avisa o usuário, porque
+/// De onde veio o ponto que está no mapa. A tela avisa o usuário, porque
 /// "achei o seu endereço" e "não achei, te mostrei onde você está" pedem
 /// atenção bem diferente.
-enum _StartOrigin { pin, address, saved, gps, country }
+///
+/// [gps] e [currentLocation] são o mesmo ponto vindo de caminhos opostos: um é
+/// o app desistindo da busca, o outro é o usuário pedindo para ver onde está.
+/// Dizer "não achei o endereço" para quem só apertou o botão de localização
+/// seria mentira — e ele confiaria menos no aviso quando ele for verdade.
+enum _StartOrigin { pin, address, saved, gps, currentLocation, country }
 
 /// Ajuste manual da localização de uma entrega.
 ///
@@ -203,9 +208,12 @@ class _LocationPickerPageState extends State<LocationPickerPage> {
     // O aviso do topo tem que acompanhar. Sem isso ele continuaria descrevendo
     // o resultado da busca — "achei só a cidade" — enquanto o pino já está na
     // posição do usuário, que é outro lugar e outra história.
+    //
+    // E é `currentLocation`, não `gps`: quem apertou o botão sabe onde está e
+    // não precisa ouvir que o endereço não foi encontrado.
     setState(() {
       _pin = target;
-      _origin = _StartOrigin.gps;
+      _origin = _StartOrigin.currentLocation;
       _precision = null;
     });
 
@@ -541,6 +549,11 @@ class _Header extends StatelessWidget {
           Icons.my_location_rounded,
           'Não achei o endereço — este é o seu local. Toque no destino',
           c.warning,
+        ),
+      _StartOrigin.currentLocation => (
+          Icons.my_location_rounded,
+          'Você está aqui. Toque no local da entrega',
+          c.textTertiary,
         ),
       _StartOrigin.country => (
           Icons.public_rounded,
