@@ -156,8 +156,11 @@ class _StopFormViewState extends State<_StopFormView> {
     _numberFocus.requestFocus();
   }
 
-  /// Abre o mapa já com o endereço digitado no topo, para o usuário saber o
-  /// que está posicionando.
+  /// Abre o mapa no endereço que está digitado agora.
+  ///
+  /// Passar só a coordenada salva não bastava: se o usuário trocou o endereço,
+  /// o mapa abria no ponto antigo e ele tinha que procurar o lugar na mão. O
+  /// endereço digitado vai junto para a tela do mapa poder localizá-lo.
   Future<void> _openMap(StopFormState state) async {
     final bloc = context.read<StopFormBloc>();
 
@@ -169,13 +172,35 @@ class _StopFormViewState extends State<_StopFormView> {
     final picked = await Navigator.of(context).push<GeoPoint>(
       MaterialPageRoute(
         builder: (_) => LocationPickerPage(
-          initial: state.effectiveCoordinate,
+          // Só o pino marcado à mão tem prioridade sobre o endereço digitado.
+          initial: state.pickedCoordinate,
+          fallback: state.existing?.coordinate,
+          addressToLocate: _typedFullAddress(),
+          cepToLocate: CepFormatter.normalize(_cep.text),
           addressLabel: label,
         ),
       ),
     );
 
     if (picked != null) bloc.add(StopLocationPicked(picked));
+  }
+
+  /// Monta o endereço com o que está nos campos agora — não o que foi salvo.
+  String _typedFullAddress() {
+    final street = _street.text.trim();
+    if (street.isEmpty) return '';
+
+    final number = _number.text.trim();
+
+    final parts = <String>[
+      number.isEmpty ? street : '$street, $number',
+      if (_neighborhood.text.trim().isNotEmpty) _neighborhood.text.trim(),
+      if (_city.text.trim().isNotEmpty) _city.text.trim(),
+      if (_state.text.trim().isNotEmpty) _state.text.trim(),
+      'Brasil',
+    ];
+
+    return parts.join(', ');
   }
 
   void _submit() {

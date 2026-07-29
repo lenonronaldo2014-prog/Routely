@@ -449,7 +449,12 @@ class _StopsList extends StatelessWidget {
     final picked = await Navigator.of(context).push<GeoPoint>(
       MaterialPageRoute(
         builder: (_) => LocationPickerPage(
-          initial: stop.coordinate,
+          fallback: stop.coordinate,
+          // Estas paradas chegam aqui justamente porque o geocoding falhou no
+          // salvamento. Mandar o endereço de novo dá uma segunda chance — e a
+          // base de CEP local costuma resolver sem rede.
+          addressToLocate: stop.fullAddress,
+          cepToLocate: stop.cep,
           addressLabel: stop.shortAddress,
         ),
       ),
