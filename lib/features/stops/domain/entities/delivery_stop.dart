@@ -1,6 +1,7 @@
 import 'package:equatable/equatable.dart';
 
 import '../../../../core/geo/geo_point.dart';
+import 'address_query.dart';
 
 enum StopStatus {
   pending,
@@ -72,7 +73,18 @@ class DeliveryStop extends Equatable {
     return parts.join(' · ');
   }
 
-  /// Endereço completo, usado para geocoding e para o deep link de navegação.
+  /// Os campos do endereço separados, para o geocoding poder afrouxar a busca
+  /// por etapas quando o endereço exato não for encontrado.
+  AddressQuery get addressQuery => AddressQuery(
+        cep: cep,
+        street: street,
+        number: number,
+        neighborhood: neighborhood,
+        city: city,
+        state: state,
+      );
+
+  /// Endereço completo, usado para o deep link de navegação.
   String get fullAddress {
     final parts = <String>[
       shortAddress,

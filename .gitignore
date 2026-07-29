@@ -52,3 +52,9 @@ app.*.map.json
 /android/key.properties
 *.jks
 *.keystore
+
+# Chave da API do Geoapify.
+#
+# Entra na compilação por `--dart-define-from-file=geoapify.json`. Sem o
+# arquivo o app compila igual e usa o Nominatim — nada quebra.
+/geoapify.json

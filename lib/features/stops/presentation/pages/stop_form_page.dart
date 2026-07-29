@@ -11,6 +11,7 @@ import '../../../../core/widgets/responsive_body.dart';
 import '../../../../injection_container.dart';
 import '../../domain/entities/address_lookup.dart';
 import '../../domain/entities/address_query.dart';
+import '../../domain/entities/address_suggestion.dart';
 import '../../domain/entities/delivery_stop.dart';
 import '../../domain/entities/scanned_address.dart';
 import '../bloc/stop_form_bloc.dart';
@@ -67,6 +68,13 @@ class _StopFormViewState extends State<_StopFormView> {
   /// campo depois que ele já completou os 8 dígitos.
   String? _lastLookedUpCep;
 
+  /// Ligado enquanto o app escreve nos campos.
+  ///
+  /// Preencher a rua a partir do CEP ou de uma sugestão dispararia o listener
+  /// como se o usuário tivesse digitado, e o app pediria sugestões para um
+  /// endereço que ele mesmo acabou de resolver — chamada paga por nada.
+  bool _fillingFields = false;
+
   @override
   void initState() {
     super.initState();
@@ -95,6 +103,7 @@ class _StopFormViewState extends State<_StopFormView> {
     // e disparar a busca por cima sobrescreveria o que foi lido.
     _lastLookedUpCep = e?.cep ?? scan?.cep;
     _cep.addListener(_onCepChanged);
+    _street.addListener(_onStreetChanged);
   }
 
   String _maskedCep(String? cep) =>
@@ -103,6 +112,7 @@ class _StopFormViewState extends State<_StopFormView> {
   @override
   void dispose() {
     _cep.removeListener(_onCepChanged);
+    _street.removeListener(_onStreetChanged);
     for (final c in [
       _label,
       _cep,
@@ -136,14 +146,87 @@ class _StopFormViewState extends State<_StopFormView> {
     context.read<StopFormBloc>().add(CepLookupRequested(digits));
   }
 
+  /// Pede sugestões enquanto o usuário digita a rua.
+  ///
+  /// O bloc é que espera a digitação parar. A tela só avisa que mudou — se
+  /// tentasse decidir aqui, o cancelamento teria que ser refeito em cada campo
+  /// que mexe no endereço.
+  void _onStreetChanged() {
+    if (_fillingFields) return;
+    context.read<StopFormBloc>().add(AddressTextChanged(_suggestionText()));
+  }
+
+  /// Junta cidade e UF ao que foi digitado, quando já se sabe.
+  ///
+  /// Sem isso, "Rua São João" devolve as de todo o Brasil e a certa
+  /// dificilmente estaria entre as cinco primeiras. Como o CEP costuma ser
+  /// preenchido antes, na prática a busca quase sempre já sai restrita à
+  /// cidade certa.
+  String _suggestionText() {
+    final street = _street.text.trim();
+    if (street.isEmpty) return '';
+
+    return [
+      street,
+      if (_city.text.trim().isNotEmpty) _city.text.trim(),
+      if (_state.text.trim().isNotEmpty) _state.text.trim(),
+    ].join(', ');
+  }
+
+  /// Preenche o formulário com a sugestão escolhida.
+  ///
+  /// A coordenada dela vai junto para o bloc, e é isso que evita uma segunda
+  /// consulta: o endereço já está localizado no momento da escolha.
+  ///
+  /// Bairro, cidade, UF e CEP são **substituídos**, inclusive quando a
+  /// sugestão vem sem eles. Manter o que estava faria o endereço misturar duas
+  /// origens: numa troca de rua, o bairro da anterior ficaria para trás e a
+  /// entrega seria salva com uma localidade que não é a dela.
+  ///
+  /// O número é a exceção — vem da etiqueta do pacote, não do mapa. Uma
+  /// sugestão de nível rua não traz número, e apagar o que o usuário já digitou
+  /// o obrigaria a redigitar.
+  void _applySuggestion(AddressSuggestion suggestion) {
+    final q = suggestion.query;
+
+    _fillingFields = true;
+
+    if (q.hasStreet) _street.text = q.street!;
+    if ((q.number ?? '').isNotEmpty) _number.text = q.number!;
+
+    _neighborhood.text = q.neighborhood?.trim() ?? '';
+    _city.text = q.city?.trim() ?? '';
+    _state.text = q.state?.trim() ?? '';
+
+    final cep = q.normalizedCep;
+    if (cep != null) {
+      // Marca como já consultado antes de escrever: o listener do CEP dispara
+      // na atribuição e a busca sobrescreveria estes campos com o resultado do
+      // ViaCEP, desfazendo a escolha do usuário.
+      _lastLookedUpCep = cep;
+      _cep.text = CepFormatter.mask(cep);
+    }
+
+    _fillingFields = false;
+
+    context.read<StopFormBloc>().add(AddressSuggestionSelected(suggestion));
+
+    // O número é o que a sugestão mais costuma não trazer.
+    _numberFocus.requestFocus();
+  }
+
   void _applyLookup(StopFormState state) {
     final lookup = state.cepResult;
     if (lookup == null) return;
+
+    _fillingFields = true;
 
     if (lookup.hasStreet) _street.text = lookup.street;
     if (lookup.neighborhood.isNotEmpty) _neighborhood.text = lookup.neighborhood;
     if (lookup.hasCity) _city.text = lookup.city;
     _state.text = lookup.state;
+
+    _fillingFields = false;
 
     // Resultado parcial (só a UF, deduzida da faixa): o logradouro é o que
     // falta, então o cursor vai para lá em vez do número.
@@ -273,14 +356,7 @@ class _StopFormViewState extends State<_StopFormView> {
                     children: [
                       _cepField(state),
                       const SizedBox(height: AppSpacing.sm),
-                      _field(
-                        controller: _street,
-                        label: 'Rua / Avenida',
-                        textCapitalization: TextCapitalization.words,
-                        validator: (v) => (v == null || v.trim().isEmpty)
-                            ? 'Informe a rua'
-                            : null,
-                      ),
+                      _streetField(state),
                       const SizedBox(height: AppSpacing.sm),
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -461,6 +537,62 @@ class _StopFormViewState extends State<_StopFormView> {
         AddressSource.cepRange => 'Complete a rua e a cidade',
       };
 
+  /// Campo de rua com as sugestões logo abaixo.
+  ///
+  /// A lista fica no fluxo da página, e não flutuando por cima: dentro de um
+  /// `ListView` uma camada sobreposta desalinha assim que o usuário rola, e
+  /// aqui ela sempre aparece com o campo à vista porque o teclado acabou de
+  /// empurrar a tela para cima.
+  Widget _streetField(StopFormState state) {
+    final c = context.colors;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextFormField(
+          controller: _street,
+          focusNode: _streetFocus,
+          textCapitalization: TextCapitalization.words,
+          validator: (v) =>
+              (v == null || v.trim().isEmpty) ? 'Informe a rua' : null,
+          decoration: InputDecoration(
+            labelText: 'Rua / Avenida',
+            counterText: '',
+            suffixIcon: state.isSuggesting
+                ? const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : null,
+          ),
+        ),
+        if (state.suggestions.isNotEmpty) ...[
+          const SizedBox(height: AppSpacing.xxs),
+          Container(
+            decoration: BoxDecoration(
+              color: c.surface,
+              borderRadius: AppRadius.mdAll,
+              border: Border.all(color: c.border),
+            ),
+            child: Column(
+              children: [
+                for (final suggestion in state.suggestions)
+                  _SuggestionTile(
+                    suggestion: suggestion,
+                    onTap: () => _applySuggestion(suggestion),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
   Widget _field({
     required TextEditingController controller,
     required String label,
@@ -484,6 +616,63 @@ class _StopFormViewState extends State<_StopFormView> {
         labelText: label,
         hintText: hint,
         counterText: '',
+      ),
+    );
+  }
+}
+
+/// Uma opção do autocomplete.
+///
+/// A segunda linha (bairro, cidade, UF, CEP) não é enfeite: nomes de rua se
+/// repetem muito entre cidades, e sem ela o usuário escolheria a errada sem
+/// perceber.
+class _SuggestionTile extends StatelessWidget {
+  final AddressSuggestion suggestion;
+  final VoidCallback onTap;
+
+  const _SuggestionTile({required this.suggestion, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: AppRadius.mdAll,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm,
+          vertical: AppSpacing.xs,
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.place_outlined, size: 19, color: c.textTertiary),
+            const SizedBox(width: AppSpacing.xs),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    suggestion.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (suggestion.detail.isNotEmpty)
+                    Text(
+                      suggestion.detail,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12.5, color: c.textTertiary),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

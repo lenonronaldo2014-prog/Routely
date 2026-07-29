@@ -2,13 +2,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:routely/core/error/exceptions.dart';
 import 'package:routely/core/geo/geo_point.dart';
 import 'package:routely/core/network/network_info.dart';
+import 'package:routely/core/services/daily_quota.dart';
 import 'package:routely/features/stops/data/datasources/address_local_data_source.dart';
 import 'package:routely/features/stops/data/datasources/address_remote_data_source.dart';
 import 'package:routely/features/stops/data/datasources/cep_directory_local_data_source.dart';
+import 'package:routely/features/stops/data/datasources/geoapify_remote_data_source.dart';
 import 'package:routely/features/stops/data/repositories/address_repository_impl.dart';
 import 'package:routely/features/stops/domain/entities/address_lookup.dart';
 import 'package:routely/features/stops/domain/entities/address_query.dart';
+import 'package:routely/features/stops/domain/entities/address_suggestion.dart';
 import 'package:routely/features/stops/domain/entities/cep_pack.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Endereço real de cidade pequena que o OpenStreetMap não mapeia: nem a rua,
 /// nem o CEP, nem o bairro respondem. Foi o caso que expôs o problema — antes
@@ -97,7 +101,8 @@ class _SpyRemote implements AddressRemoteDataSource {
 }
 
 class _FakeCache implements AddressLocalDataSource {
-  final Map<String, GeoPoint> geocodes = {};
+  final Map<String, ApproximateLocation> locations = {};
+  final Map<String, String> providers = {};
 
   @override
   Future<AddressLookup?> getCachedCep(String cep) async => null;
@@ -106,12 +111,57 @@ class _FakeCache implements AddressLocalDataSource {
   Future<void> cacheCep(AddressLookup lookup) async {}
 
   @override
-  Future<GeoPoint?> getCachedGeocode(String addressKey) async =>
-      geocodes[addressKey];
+  Future<ApproximateLocation?> getCachedLocation(String addressKey) async =>
+      locations[addressKey];
 
   @override
-  Future<void> cacheGeocode(String addressKey, GeoPoint point) async {
-    geocodes[addressKey] = point;
+  Future<void> cacheLocation(
+    String addressKey,
+    ApproximateLocation location, {
+    required String provider,
+  }) async {
+    locations[addressKey] = location;
+    providers[addressKey] = provider;
+  }
+}
+
+/// Geoapify controlável: responde o que estiver em [answer], ou nada.
+class _FakeGeoapify implements GeoapifyRemoteDataSource {
+  final ApproximateLocation? answer;
+  final List<AddressSuggestion> suggestions;
+  final bool configured;
+
+  /// Se deve estourar em vez de responder — para checar que o plano B entra.
+  final bool fails;
+
+  int geocodeCalls = 0;
+  int autocompleteCalls = 0;
+
+  _FakeGeoapify({
+    this.answer,
+    this.suggestions = const [],
+    this.configured = true,
+    this.fails = false,
+  });
+
+  @override
+  bool get isConfigured => configured;
+
+  @override
+  Future<ApproximateLocation?> geocode(AddressQuery query) async {
+    geocodeCalls++;
+    if (fails) throw GeocodingException('fora do ar');
+    return answer;
+  }
+
+  @override
+  Future<List<AddressSuggestion>> autocomplete(
+    String text, {
+    GeoPoint? bias,
+  }) async {
+    autocompleteCalls++;
+    if (fails) throw GeocodingException('fora do ar');
+    return suggestions;
   }
 }
 
@@ -159,14 +209,27 @@ class _FakeNetwork implements NetworkInfo {
   Future<bool> get isConnected async => connected;
 }
 
+late SharedPreferences _prefs;
+
+/// `budget: 0` representa a cota do dia esgotada — é o que faz o app cair no
+/// plano B.
+DailyQuota _quota({int budget = 100}) =>
+    DailyQuota(prefs: _prefs, name: 'geoapify', budget: budget);
+
 AddressRepositoryImpl _repository({
   required AddressRemoteDataSource remote,
+  _FakeGeoapify? geoapify,
+  DailyQuota? quota,
   _FakeCache? cache,
   GeoPoint? directoryPoint,
   bool connected = true,
 }) =>
     AddressRepositoryImpl(
       remoteDataSource: remote,
+      // Sem Geoapify por padrão: a maioria dos testes exercita a cascata do
+      // Nominatim, que é o plano B.
+      geoapifyDataSource: geoapify ?? _FakeGeoapify(configured: false),
+      geoapifyQuota: quota ?? _quota(),
       localDataSource: cache ?? _FakeCache(),
       directoryDataSource: _FakeDirectory(coordinate: directoryPoint),
       networkInfo: _FakeNetwork(connected),
@@ -175,6 +238,11 @@ AddressRepositoryImpl _repository({
     );
 
 void main() {
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    _prefs = await SharedPreferences.getInstance();
+  });
+
   group('locateApproximate', () {
     test('endereço completo encontrado devolve precisão exata', () async {
       final remote = _FakeRemote({'freeText'});
@@ -275,17 +343,20 @@ void main() {
       expect(result, isNull);
     });
 
-    // Guardar um acerto de bairro no cache faria a próxima consulta jurar que
-    // era o endereço exato — e o usuário confirmaria um ponto errado.
-    test('só o resultado exato entra no cache', () async {
+    // O cache guarda a precisão junto. Sem isso, um acerto de bairro voltaria
+    // do cache se passando por endereço exato e o usuário confirmaria um ponto
+    // errado achando que estava conferido.
+    test('o cache preserva a precisão do resultado', () async {
       final cache = _FakeCache();
       await _repository(remote: _FakeRemote({'street'}), cache: cache)
           .locateApproximate(_query);
-      expect(cache.geocodes, isEmpty);
 
-      await _repository(remote: _FakeRemote({'freeText'}), cache: cache)
+      final remote = _FakeRemote({'freeText'});
+      final result = await _repository(remote: remote, cache: cache)
           .locateApproximate(_query);
-      expect(cache.geocodes, isNotEmpty);
+
+      expect(result?.precision, LocationPrecision.street);
+      expect(remote.calls, isEmpty, reason: 'veio do cache');
     });
 
     test('endereço repetido sai do cache sem tocar na rede', () async {
@@ -308,6 +379,169 @@ void main() {
 
       expect(result, isNull);
       expect(remote.calls, isEmpty);
+    });
+  });
+
+  group('Geoapify como fonte principal', () {
+    const geoapifyPoint = GeoPoint(latitude: -24.5100, longitude: -48.8400);
+    const exact = ApproximateLocation(
+      point: geoapifyPoint,
+      precision: LocationPrecision.exact,
+    );
+
+    test('acertou: o Nominatim nem é consultado', () async {
+      final remote = _FakeRemote({'freeText'});
+      final geoapify = _FakeGeoapify(answer: exact);
+
+      final result = await _repository(remote: remote, geoapify: geoapify)
+          .locateApproximate(_query);
+
+      expect(result?.point, geoapifyPoint);
+      expect(geoapify.geocodeCalls, 1);
+      expect(remote.calls, isEmpty, reason: 'plano B só entra quando falta');
+    });
+
+    test('não achou: cai para a cascata do Nominatim', () async {
+      final remote = _FakeRemote({'street'});
+      final geoapify = _FakeGeoapify();
+
+      final result = await _repository(remote: remote, geoapify: geoapify)
+          .locateApproximate(_query);
+
+      expect(result?.precision, LocationPrecision.street);
+      expect(geoapify.geocodeCalls, 1);
+    });
+
+    test('fora do ar: cai para a cascata do Nominatim', () async {
+      final remote = _FakeRemote({'freeText'});
+      final geoapify = _FakeGeoapify(fails: true);
+
+      final result = await _repository(remote: remote, geoapify: geoapify)
+          .locateApproximate(_query);
+
+      expect(result?.precision, LocationPrecision.exact);
+      expect(remote.calls, isNotEmpty);
+    });
+
+    // O plano gratuito não cobra excedente, ele para de responder. Sair antes
+    // do limite mantém o app funcionando pelo plano B em vez de o usuário
+    // descobrir a cota através de um erro.
+    test('cota esgotada: nem tenta o Geoapify', () async {
+      final remote = _FakeRemote({'freeText'});
+      final geoapify = _FakeGeoapify(answer: exact);
+
+      final result = await _repository(
+        remote: remote,
+        geoapify: geoapify,
+        quota: _quota(budget: 0),
+      ).locateApproximate(_query);
+
+      expect(geoapify.geocodeCalls, 0);
+      expect(result?.precision, LocationPrecision.exact);
+      expect(remote.calls, isNotEmpty, reason: 'resolvido pelo plano B');
+    });
+
+    test('a chamada bem-sucedida desconta da cota do dia', () async {
+      final quota = _quota(budget: 100);
+      await _repository(
+        remote: _FakeRemote({}),
+        geoapify: _FakeGeoapify(answer: exact),
+        quota: quota,
+      ).locateApproximate(_query);
+
+      expect(quota.spentToday, 1);
+    });
+
+    test('o resultado do Geoapify entra no cache com o provedor', () async {
+      final cache = _FakeCache();
+      await _repository(
+        remote: _FakeRemote({}),
+        geoapify: _FakeGeoapify(answer: exact),
+        cache: cache,
+      ).locateApproximate(_query);
+
+      expect(cache.providers.values, ['geoapify']);
+    });
+  });
+
+  group('suggest', () {
+    final suggestion = AddressSuggestion(
+      label: 'Rua Carlos Ollig, 20',
+      detail: 'Pinheiros · Apiaí · SP',
+      query: _query,
+      point: _found,
+      precision: LocationPrecision.exact,
+    );
+
+    test('devolve as sugestões do Geoapify', () async {
+      final geoapify = _FakeGeoapify(suggestions: [suggestion]);
+      final result = await _repository(remote: _FakeRemote({}), geoapify: geoapify)
+          .suggest('Rua Carlos Ollig');
+
+      expect(result, [suggestion]);
+      expect(geoapify.autocompleteCalls, 1);
+    });
+
+    // Duas ou três letras devolvem o Brasil inteiro. A sugestão não serviria e
+    // a cota iria embora do mesmo jeito.
+    test('texto curto demais não vira chamada', () async {
+      final geoapify = _FakeGeoapify(suggestions: [suggestion]);
+      final result = await _repository(remote: _FakeRemote({}), geoapify: geoapify)
+          .suggest('Rua');
+
+      expect(result, isEmpty);
+      expect(geoapify.autocompleteCalls, 0);
+    });
+
+    test('o mesmo texto de novo sai da memória', () async {
+      final geoapify = _FakeGeoapify(suggestions: [suggestion]);
+      final repository =
+          _repository(remote: _FakeRemote({}), geoapify: geoapify);
+
+      await repository.suggest('Rua Carlos Ollig');
+      await repository.suggest('rua  carlos ollig');
+
+      expect(geoapify.autocompleteCalls, 1, reason: 'a segunda veio do memo');
+    });
+
+    // O Nominatim proíbe autocomplete na política de uso, e ser bloqueado lá
+    // derrubaria também o geocoding, que importa mais.
+    test('sem Geoapify não há sugestão nenhuma', () async {
+      final remote = _FakeRemote({'freeText'});
+      final result = await _repository(
+        remote: remote,
+        geoapify: _FakeGeoapify(configured: false),
+      ).suggest('Rua Carlos Ollig');
+
+      expect(result, isEmpty);
+      expect(remote.calls, isEmpty);
+    });
+
+    test('offline não tenta sugerir', () async {
+      final geoapify = _FakeGeoapify(suggestions: [suggestion]);
+      final result = await _repository(
+        remote: _FakeRemote({}),
+        geoapify: geoapify,
+        connected: false,
+      ).suggest('Rua Carlos Ollig');
+
+      expect(result, isEmpty);
+      expect(geoapify.autocompleteCalls, 0);
+    });
+
+    // A sugestão já veio com coordenada. Localizar esse endereço depois não
+    // pode gastar outra chamada para descobrir o que já se sabe.
+    test('a sugestão escolhida dispensa a consulta seguinte', () async {
+      final cache = _FakeCache();
+      final geoapify = _FakeGeoapify(suggestions: [suggestion]);
+      final repository =
+          _repository(remote: _FakeRemote({}), geoapify: geoapify, cache: cache);
+
+      await repository.rememberSuggestion(suggestion);
+      final located = await repository.locateApproximate(_query);
+
+      expect(located?.point, _found);
+      expect(geoapify.geocodeCalls, 0);
     });
   });
 

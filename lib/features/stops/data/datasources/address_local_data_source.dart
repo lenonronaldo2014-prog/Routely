@@ -4,6 +4,7 @@ import '../../../../core/database/app_database.dart';
 import '../../../../core/error/exceptions.dart';
 import '../../../../core/geo/geo_point.dart';
 import '../../domain/entities/address_lookup.dart';
+import '../../domain/entities/address_query.dart';
 
 /// Cache local de CEP e de geocoding.
 ///
@@ -15,8 +16,20 @@ import '../../domain/entities/address_lookup.dart';
 abstract class AddressLocalDataSource {
   Future<AddressLookup?> getCachedCep(String cep);
   Future<void> cacheCep(AddressLookup lookup);
-  Future<GeoPoint?> getCachedGeocode(String addressKey);
-  Future<void> cacheGeocode(String addressKey, GeoPoint point);
+
+  /// Coordenada já resolvida para este endereço, com a precisão que ela tinha
+  /// quando foi obtida.
+  ///
+  /// É o que evita pagar duas vezes pelo mesmo endereço: entregador repete
+  /// muito destino, e a segunda consulta traria exatamente a mesma resposta da
+  /// primeira.
+  Future<ApproximateLocation?> getCachedLocation(String addressKey);
+
+  Future<void> cacheLocation(
+    String addressKey,
+    ApproximateLocation location, {
+    required String provider,
+  });
 }
 
 class AddressLocalDataSourceImpl implements AddressLocalDataSource {
@@ -77,7 +90,7 @@ class AddressLocalDataSourceImpl implements AddressLocalDataSource {
   }
 
   @override
-  Future<GeoPoint?> getCachedGeocode(String addressKey) async {
+  Future<ApproximateLocation?> getCachedLocation(String addressKey) async {
     try {
       final db = await appDatabase.database;
       final rows = await db.query(
@@ -88,9 +101,15 @@ class AddressLocalDataSourceImpl implements AddressLocalDataSource {
       );
       if (rows.isEmpty) return null;
 
-      return GeoPoint(
-        latitude: rows.first['latitude'] as double,
-        longitude: rows.first['longitude'] as double,
+      final row = rows.first;
+      final point = GeoPoint(
+        latitude: row['latitude'] as double,
+        longitude: row['longitude'] as double,
+      );
+
+      return ApproximateLocation(
+        point: point,
+        precision: _precisionFrom(row['precision'] as String?),
       );
     } catch (e) {
       throw CacheException(message: e.toString());
@@ -98,15 +117,21 @@ class AddressLocalDataSourceImpl implements AddressLocalDataSource {
   }
 
   @override
-  Future<void> cacheGeocode(String addressKey, GeoPoint point) async {
+  Future<void> cacheLocation(
+    String addressKey,
+    ApproximateLocation location, {
+    required String provider,
+  }) async {
     try {
       final db = await appDatabase.database;
       await db.insert(
         'geocode_cache',
         {
           'address_key': addressKey,
-          'latitude': point.latitude,
-          'longitude': point.longitude,
+          'latitude': location.point.latitude,
+          'longitude': location.point.longitude,
+          'precision': location.precision.name,
+          'provider': provider,
           'cached_at': DateTime.now().millisecondsSinceEpoch,
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
@@ -115,4 +140,13 @@ class AddressLocalDataSourceImpl implements AddressLocalDataSource {
       throw CacheException(message: e.toString());
     }
   }
+
+  /// Linhas gravadas antes da coluna existir não têm precisão. Na versão
+  /// anterior o cache só recebia acerto exato, então ler o nulo como exato
+  /// preserva o significado do que já estava lá.
+  static LocationPrecision _precisionFrom(String? name) =>
+      LocationPrecision.values.firstWhere(
+        (precision) => precision.name == name,
+        orElse: () => LocationPrecision.exact,
+      );
 }

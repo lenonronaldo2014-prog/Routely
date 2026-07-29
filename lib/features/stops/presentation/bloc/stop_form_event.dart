@@ -1,6 +1,7 @@
 import 'package:equatable/equatable.dart';
 
 import '../../../../core/geo/geo_point.dart';
+import '../../domain/entities/address_suggestion.dart';
 import '../../domain/entities/delivery_stop.dart';
 
 abstract class StopFormEvent extends Equatable {
@@ -27,6 +28,47 @@ class CepLookupRequested extends StopFormEvent {
 
   @override
   List<Object?> get props => [cep];
+}
+
+/// O usuário digitou no campo de rua.
+///
+/// Não dispara consulta na hora: o bloc espera ele parar de digitar. Uma
+/// chamada por tecla queimaria a cota do dia em poucos endereços.
+class AddressTextChanged extends StopFormEvent {
+  final String text;
+
+  const AddressTextChanged(this.text);
+
+  @override
+  List<Object?> get props => [text];
+}
+
+/// Disparado pelo próprio bloc quando a digitação parou. Só isso vira consulta.
+class AddressSuggestionsRequested extends StopFormEvent {
+  final String text;
+
+  const AddressSuggestionsRequested(this.text);
+
+  @override
+  List<Object?> get props => [text];
+}
+
+/// O usuário escolheu uma sugestão.
+///
+/// A sugestão veio com coordenada, então o endereço já está localizado — não
+/// há segunda consulta para descobrir o que a primeira já respondeu.
+class AddressSuggestionSelected extends StopFormEvent {
+  final AddressSuggestion suggestion;
+
+  const AddressSuggestionSelected(this.suggestion);
+
+  @override
+  List<Object?> get props => [suggestion];
+}
+
+/// Fecha a lista de sugestões sem escolher nenhuma.
+class AddressSuggestionsDismissed extends StopFormEvent {
+  const AddressSuggestionsDismissed();
 }
 
 /// O usuário posicionou o pino no mapa. Essa coordenada passa a valer mais que

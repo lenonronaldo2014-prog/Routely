@@ -5,7 +5,10 @@ import 'package:sqflite/sqflite.dart';
 /// e só depois (quando/se houver rede) sincronizado ou enriquecido.
 class AppDatabase {
   static const defaultDatabaseName = 'routely.db';
-  static const _dbVersion = 4;
+
+  /// Público para o teste de migração poder afirmar "chegou na versão atual"
+  /// em vez de repetir o número — que é justamente o que sai de sincronia.
+  static const currentVersion = 5;
 
   /// Configurável só para teste: o `flutter test` roda arquivos em paralelo, e
   /// dois testes abrindo o mesmo arquivo de banco davam falha intermitente —
@@ -25,7 +28,7 @@ class AppDatabase {
     final path = p.join(await getDatabasesPath(), databaseName);
     return openDatabase(
       path,
-      version: _dbVersion,
+      version: currentVersion,
       onConfigure: _onConfigure,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
@@ -90,6 +93,7 @@ class AppDatabase {
     await _createCepDirectoryTables(db);
     await _addCepCoordinates(db);
     await _createHistoryTable(db);
+    await _addGeocodeProvenance(db);
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -103,6 +107,24 @@ class AppDatabase {
       await _addCepCoordinates(db);
       await _createHistoryTable(db);
     }
+    if (oldVersion < 5) {
+      await _addGeocodeProvenance(db);
+    }
+  }
+
+  /// De onde a coordenada do cache veio e quanto ela vale.
+  ///
+  /// Sem isso o cache era uma coordenada anônima, e o app não tinha como saber
+  /// se aquilo era a porta certa ou o centro da cidade — então só dava para
+  /// guardar acertos exatos e todo o resto virava consulta nova. Guardando a
+  /// precisão, o resultado aproximado também pode ser reaproveitado, com o
+  /// aviso certo na tela.
+  ///
+  /// Linhas antigas ficam com `precision` nulo e são lidas como exatas: era o
+  /// único caso que a versão anterior gravava.
+  Future<void> _addGeocodeProvenance(Database db) async {
+    await db.execute('ALTER TABLE geocode_cache ADD COLUMN precision TEXT');
+    await db.execute('ALTER TABLE geocode_cache ADD COLUMN provider TEXT');
   }
 
   /// Coordenada junto do CEP.

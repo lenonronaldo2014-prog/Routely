@@ -150,7 +150,7 @@ void main() {
       final appDatabase = AppDatabase(databaseName: dbName);
       final db = await appDatabase.database;
 
-      expect(await db.getVersion(), 4);
+      expect(await db.getVersion(), AppDatabase.currentVersion);
 
       // As tabelas novas precisam existir e estar utilizáveis.
       for (final table in [
@@ -201,9 +201,22 @@ void main() {
       final bootstrap = AppDatabase(databaseName: dbName);
       final db = await bootstrap.database;
       await db.setVersion(3);
-      // Desfaz o que a v4 criou, para simular um banco parado na v3.
+
+      // Desfaz tudo que veio depois da v3, para o banco realmente parecer
+      // parado nela. Deixar resquício de versão mais nova aqui faria a
+      // migração estourar em "coluna já existe" e o teste acusaria um problema
+      // que a instalação real não tem.
       await db.execute('DROP TABLE IF EXISTS delivery_history');
       await db.execute('DROP TABLE IF EXISTS cep_directory');
+      await db.execute('DROP TABLE IF EXISTS geocode_cache');
+      await db.execute('''
+        CREATE TABLE geocode_cache (
+          address_key    TEXT    PRIMARY KEY,
+          latitude       REAL    NOT NULL,
+          longitude      REAL    NOT NULL,
+          cached_at      INTEGER NOT NULL
+        )
+      ''');
       await db.execute('''
         CREATE TABLE cep_directory (
           cep            TEXT    PRIMARY KEY,
@@ -234,7 +247,7 @@ void main() {
       final version = await db.getVersion();
       await appDatabase.close();
 
-      expect(version, 4);
+      expect(version, AppDatabase.currentVersion);
       expect(stops, hasLength(3));
       expect(ceps, hasLength(1));
       expect(

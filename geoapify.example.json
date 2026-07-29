@@ -1,0 +1,4 @@
+{
+  "_comment": "Copie este arquivo para geoapify.json e ponha a sua chave. O geoapify.json está no .gitignore e nunca deve ser versionado. Compile com: flutter build apk --release --dart-define-from-file=geoapify.json",
+  "GEOAPIFY_KEY": "cole-aqui-a-sua-chave"
+}

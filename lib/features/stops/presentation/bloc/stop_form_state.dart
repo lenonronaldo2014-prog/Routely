@@ -2,6 +2,7 @@ import 'package:equatable/equatable.dart';
 
 import '../../../../core/geo/geo_point.dart';
 import '../../domain/entities/address_lookup.dart';
+import '../../domain/entities/address_suggestion.dart';
 import '../../domain/entities/delivery_stop.dart';
 
 enum StopFormStatus { editing, saving, saved }
@@ -31,6 +32,19 @@ class StopFormState extends Equatable {
   /// Ponto marcado à mão no mapa. Quando existe, substitui o geocoding.
   final GeoPoint? pickedCoordinate;
 
+  /// Opções do autocomplete para o que está digitado no campo de rua.
+  final List<AddressSuggestion> suggestions;
+
+  final bool isSuggesting;
+
+  /// Coordenada que veio junto da sugestão escolhida.
+  ///
+  /// Guardada separada do pino manual porque tem validade diferente: assim que
+  /// o usuário edita a rua de novo, ela deixa de valer — o texto não descreve
+  /// mais o lugar que o serviço devolveu. O pino manual não se invalida assim,
+  /// porque foi o usuário olhando para a porta.
+  final GeoPoint? suggestedCoordinate;
+
   const StopFormState({
     this.status = StopFormStatus.editing,
     this.existing,
@@ -40,11 +54,15 @@ class StopFormState extends Equatable {
     this.saveError,
     this.savedWithoutCoordinate = false,
     this.pickedCoordinate,
+    this.suggestions = const [],
+    this.isSuggesting = false,
+    this.suggestedCoordinate,
   });
 
-  /// Coordenada que a tela deve mostrar: a marcada à mão, ou a que a parada já
-  /// tinha.
-  GeoPoint? get effectiveCoordinate => pickedCoordinate ?? existing?.coordinate;
+  /// Coordenada que a tela deve mostrar, do mais confiável para o menos: o pino
+  /// marcado à mão, a sugestão escolhida, e por fim a que a parada já tinha.
+  GeoPoint? get effectiveCoordinate =>
+      pickedCoordinate ?? suggestedCoordinate ?? existing?.coordinate;
 
   bool get hasCoordinate => effectiveCoordinate?.isValid ?? false;
 
@@ -57,9 +75,13 @@ class StopFormState extends Equatable {
     String? saveError,
     bool? savedWithoutCoordinate,
     GeoPoint? pickedCoordinate,
+    List<AddressSuggestion>? suggestions,
+    bool? isSuggesting,
+    GeoPoint? suggestedCoordinate,
     bool clearCepError = false,
     bool clearSaveError = false,
     bool clearCepResult = false,
+    bool clearSuggestedCoordinate = false,
   }) {
     return StopFormState(
       status: status ?? this.status,
@@ -71,6 +93,11 @@ class StopFormState extends Equatable {
       savedWithoutCoordinate:
           savedWithoutCoordinate ?? this.savedWithoutCoordinate,
       pickedCoordinate: pickedCoordinate ?? this.pickedCoordinate,
+      suggestions: suggestions ?? this.suggestions,
+      isSuggesting: isSuggesting ?? this.isSuggesting,
+      suggestedCoordinate: clearSuggestedCoordinate
+          ? null
+          : (suggestedCoordinate ?? this.suggestedCoordinate),
     );
   }
 
@@ -84,5 +111,8 @@ class StopFormState extends Equatable {
         saveError,
         savedWithoutCoordinate,
         pickedCoordinate,
+        suggestions,
+        isSuggesting,
+        suggestedCoordinate,
       ];
 }

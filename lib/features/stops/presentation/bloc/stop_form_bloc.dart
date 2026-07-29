@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/error/failures.dart';
 import '../../../../core/util/id_generator.dart';
 import '../../domain/entities/delivery_stop.dart';
+import '../../domain/repositories/address_repository.dart';
 import '../../domain/usecases/lookup_cep.dart';
 import '../../domain/usecases/save_stop.dart';
 import 'stop_form_event.dart';
@@ -11,15 +14,37 @@ import 'stop_form_state.dart';
 class StopFormBloc extends Bloc<StopFormEvent, StopFormState> {
   final LookupCep lookupCep;
   final SaveStop saveStop;
+  final AddressRepository addressRepository;
+
+  /// Quanto tempo parado antes de consultar.
+  ///
+  /// Uma consulta por tecla gastaria uma dúzia de chamadas num endereço só.
+  /// 400ms é o intervalo em que a digitação normal não gera pausa, mas o
+  /// usuário ainda não percebe espera.
+  final Duration suggestionDebounce;
+
+  Timer? _debounce;
 
   StopFormBloc({
     required this.lookupCep,
     required this.saveStop,
+    required this.addressRepository,
+    this.suggestionDebounce = const Duration(milliseconds: 400),
   }) : super(const StopFormState()) {
     on<StopFormStarted>(_onStarted);
     on<CepLookupRequested>(_onCepLookup);
     on<StopLocationPicked>(_onLocationPicked);
+    on<AddressTextChanged>(_onAddressTextChanged);
+    on<AddressSuggestionsRequested>(_onSuggestionsRequested);
+    on<AddressSuggestionSelected>(_onSuggestionSelected);
+    on<AddressSuggestionsDismissed>(_onSuggestionsDismissed);
     on<StopFormSubmitted>(_onSubmit);
+  }
+
+  @override
+  Future<void> close() {
+    _debounce?.cancel();
+    return super.close();
   }
 
   void _onStarted(StopFormStarted event, Emitter<StopFormState> emit) {
@@ -31,6 +56,65 @@ class StopFormBloc extends Bloc<StopFormEvent, StopFormState> {
     Emitter<StopFormState> emit,
   ) {
     emit(state.copyWith(pickedCoordinate: event.coordinate));
+  }
+
+  /// Reinicia a contagem a cada tecla. Só a última pausa vira consulta.
+  void _onAddressTextChanged(
+    AddressTextChanged event,
+    Emitter<StopFormState> emit,
+  ) {
+    _debounce?.cancel();
+
+    // O texto mudou, então a coordenada da sugestão anterior não descreve mais
+    // o que está escrito. Mantê-la salvaria a parada no lugar antigo.
+    emit(state.copyWith(clearSuggestedCoordinate: true));
+
+    _debounce = Timer(
+      suggestionDebounce,
+      () {
+        if (!isClosed) add(AddressSuggestionsRequested(event.text));
+      },
+    );
+  }
+
+  Future<void> _onSuggestionsRequested(
+    AddressSuggestionsRequested event,
+    Emitter<StopFormState> emit,
+  ) async {
+    emit(state.copyWith(isSuggesting: true));
+
+    final suggestions = await addressRepository.suggest(event.text);
+    if (isClosed) return;
+
+    emit(state.copyWith(isSuggesting: false, suggestions: suggestions));
+  }
+
+  Future<void> _onSuggestionSelected(
+    AddressSuggestionSelected event,
+    Emitter<StopFormState> emit,
+  ) async {
+    // Guarda o endereço com a coordenada que já veio. Salvar a parada depois
+    // encontra isso no cache em vez de consultar de novo.
+    await addressRepository.rememberSuggestion(event.suggestion);
+    if (isClosed) return;
+
+    // A escolha encerra a busca: a lista some e a contagem pendente é
+    // cancelada, senão ela dispararia uma consulta pelo texto já resolvido.
+    _debounce?.cancel();
+
+    emit(state.copyWith(
+      suggestions: const [],
+      isSuggesting: false,
+      suggestedCoordinate: event.suggestion.point,
+    ));
+  }
+
+  void _onSuggestionsDismissed(
+    AddressSuggestionsDismissed event,
+    Emitter<StopFormState> emit,
+  ) {
+    _debounce?.cancel();
+    emit(state.copyWith(suggestions: const [], isSuggesting: false));
   }
 
   Future<void> _onCepLookup(
@@ -82,9 +166,12 @@ class StopFormBloc extends Bloc<StopFormEvent, StopFormState> {
       //
       // 1. o pino que o usuário marcou no mapa — ele estava olhando para a
       //    porta, nenhum serviço de geocoding tem essa informação;
-      // 2. a que a parada já tinha, se o endereço não mudou;
-      // 3. nenhuma — aí o repositório geocodifica na hora de salvar.
+      // 2. a que veio na sugestão escolhida — já foi paga, seria desperdício
+      //    consultar de novo o mesmo endereço;
+      // 3. a que a parada já tinha, se o endereço não mudou;
+      // 4. nenhuma — aí o repositório geocodifica na hora de salvar.
       coordinate: state.pickedCoordinate ??
+          state.suggestedCoordinate ??
           (_addressUnchanged(existing, event) ? existing?.coordinate : null),
       notes: _nullIfBlank(event.notes),
       status: existing?.status ?? StopStatus.pending,

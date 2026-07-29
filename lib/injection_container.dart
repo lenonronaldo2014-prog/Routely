@@ -4,8 +4,10 @@ import 'package:get_it/get_it.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'core/config/app_config.dart';
 import 'core/database/app_database.dart';
 import 'core/network/network_info.dart';
+import 'core/services/daily_quota.dart';
 import 'core/services/navigation_launcher.dart';
 import 'core/settings/app_settings.dart';
 import 'features/location/data/repositories/location_repository_impl.dart';
@@ -28,6 +30,7 @@ import 'features/settings/presentation/cubit/settings_cubit.dart';
 import 'features/stops/data/datasources/address_local_data_source.dart';
 import 'features/stops/data/datasources/address_remote_data_source.dart';
 import 'features/stops/data/datasources/cep_directory_local_data_source.dart';
+import 'features/stops/data/datasources/geoapify_remote_data_source.dart';
 import 'features/stops/data/datasources/backup_data_source.dart';
 import 'features/stops/data/datasources/history_local_data_source.dart';
 import 'features/stops/data/datasources/label_scanner_data_source.dart';
@@ -73,7 +76,11 @@ Future<void> init() async {
     ),
   );
   sl.registerFactory(
-    () => StopFormBloc(lookupCep: sl(), saveStop: sl()),
+    () => StopFormBloc(
+      lookupCep: sl(),
+      saveStop: sl(),
+      addressRepository: sl(),
+    ),
   );
   sl.registerFactory(() => CepPacksCubit(sl()));
   sl.registerFactory(() => HistoryCubit(sl()));
@@ -107,6 +114,8 @@ Future<void> init() async {
   sl.registerLazySingleton<AddressRepository>(
     () => AddressRepositoryImpl(
       remoteDataSource: sl(),
+      geoapifyDataSource: sl(),
+      geoapifyQuota: sl(),
       localDataSource: sl(),
       directoryDataSource: sl(),
       networkInfo: sl(),
@@ -122,6 +131,9 @@ Future<void> init() async {
   );
   sl.registerLazySingleton<AddressRemoteDataSource>(
     () => AddressRemoteDataSourceImpl(client: sl()),
+  );
+  sl.registerLazySingleton<GeoapifyRemoteDataSource>(
+    () => GeoapifyRemoteDataSourceImpl(client: sl()),
   );
   sl.registerLazySingleton<CepDirectoryLocalDataSource>(
     () => CepDirectoryLocalDataSourceImpl(appDatabase: sl()),
@@ -201,6 +213,16 @@ Future<void> init() async {
 
   //! Core
   sl.registerLazySingleton<NetworkInfo>(() => NetworkInfoImpl(sl()));
+
+  // Segura o consumo do plano gratuito do Geoapify. Estourado o teto do dia, o
+  // app cai no Nominatim em vez de começar a receber recusa do provedor.
+  sl.registerLazySingleton(
+    () => DailyQuota(
+      prefs: sl(),
+      name: 'geoapify',
+      budget: AppConfig.geoapifyDailyBudget,
+    ),
+  );
   sl.registerLazySingleton(() => NavigationLauncher());
   sl.registerLazySingleton(() => AppSettings(sl()));
   sl.registerLazySingleton(() => AppDatabase());

@@ -2,6 +2,7 @@ import 'package:dartz/dartz.dart';
 
 import '../../../../core/error/exceptions.dart';
 import '../../../../core/error/failures.dart';
+import '../../domain/entities/address_query.dart';
 import '../../domain/entities/delivery_stop.dart';
 import '../../domain/repositories/address_repository.dart';
 import '../../domain/repositories/stops_repository.dart';
@@ -36,24 +37,21 @@ class StopsRepositoryImpl implements StopsRepository {
   Future<Either<Failure, DeliveryStop>> saveStop(DeliveryStop stop) async {
     var resolved = stop;
 
-    // Ordem de resolução da coordenada, do mais barato para o mais caro:
+    // O geocoding acontece aqui, uma vez, no cadastro — e a coordenada fica
+    // gravada. O cálculo de rota depois lê o que está no banco e nunca
+    // geocodifica de novo: seria pagar toda vez que o entregador recalcula o
+    // roteiro, que é várias vezes por dia, pelo mesmo endereço.
     //
-    // 1. base de CEP local — instantânea, offline, sem custo por usuário. É o
-    //    que mantém o app viável de operar de graça em escala;
-    // 2. geocoding online — só quando a base não cobre o CEP;
-    // 3. nada — a parada é salva mesmo assim, marcada como "sem localização",
-    //    e o usuário resolve no mapa quando quiser.
-    if (!stop.isRoutable && stop.cep != null) {
-      final local = await addressRepository.coordinateFromDirectory(stop.cep!);
-      if (local != null) resolved = stop.copyWith(coordinate: local);
-    }
-
-    if (!resolved.isRoutable) {
-      final geocodeResult = await addressRepository.geocode(stop.fullAddress);
-      resolved = geocodeResult.fold(
-        (_) => resolved,
-        (point) => resolved.copyWith(coordinate: point),
+    // Quando não dá para localizar, a parada é salva mesmo assim, marcada como
+    // "sem localização". Ela fica de fora da rota até o usuário marcar o ponto
+    // no mapa — perder o cadastro seria pior.
+    if (!stop.isRoutable) {
+      final located = await addressRepository.locateApproximate(
+        stop.addressQuery,
       );
+      if (_isPreciseEnough(located)) {
+        resolved = stop.copyWith(coordinate: located!.point);
+      }
     }
 
     try {
@@ -63,6 +61,17 @@ class StopsRepositoryImpl implements StopsRepository {
       return Left(CacheFailure());
     }
   }
+
+  /// Até bairro serve para ordenar a rota; o centro da cidade não.
+  ///
+  /// Um erro de alguns quarteirões muda pouco a ordem das paradas, que é o que
+  /// o app decide. Já o centroide da cidade colocaria paradas de bairros
+  /// opostos no mesmo ponto e produziria um roteiro que parece calculado e
+  /// está errado — pior que assumir que não achou e pedir o ponto no mapa.
+  bool _isPreciseEnough(ApproximateLocation? located) =>
+      located != null &&
+      located.point.isValid &&
+      located.precision != LocationPrecision.city;
 
   @override
   Future<Either<Failure, void>> deleteStop(String id) async {
@@ -117,16 +126,15 @@ class StopsRepositoryImpl implements StopsRepository {
           stops.where((s) => !s.isRoutable && s.isPending).toList();
 
       for (final stop in unresolved) {
-        final result = await addressRepository.geocode(stop.fullAddress);
-        await result.fold(
-          // Sem rede ou endereço não encontrado: deixa como está e tenta de
-          // novo na próxima vez. Não faz sentido insistir agora.
-          (_) async {},
-          (point) async {
-            await localDataSource.upsertStop(
-              StopModel.fromEntity(stop.copyWith(coordinate: point)),
-            );
-          },
+        final located =
+            await addressRepository.locateApproximate(stop.addressQuery);
+
+        // Sem rede ou endereço não encontrado: deixa como está e tenta de novo
+        // na próxima vez. Não faz sentido insistir agora.
+        if (!_isPreciseEnough(located)) continue;
+
+        await localDataSource.upsertStop(
+          StopModel.fromEntity(stop.copyWith(coordinate: located!.point)),
         );
       }
 

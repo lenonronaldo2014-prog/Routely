@@ -4,27 +4,62 @@ import '../../../../core/error/exceptions.dart';
 import '../../../../core/error/failures.dart';
 import '../../../../core/geo/geo_point.dart';
 import '../../../../core/network/network_info.dart';
+import '../../../../core/services/daily_quota.dart';
 import '../../../../core/util/cep_formatter.dart';
 import '../../../../core/util/cep_range_resolver.dart';
 import '../../domain/entities/address_lookup.dart';
 import '../../domain/entities/address_query.dart';
+import '../../domain/entities/address_suggestion.dart';
 import '../../domain/repositories/address_repository.dart';
 import '../datasources/address_local_data_source.dart';
 import '../datasources/address_remote_data_source.dart';
 import '../datasources/cep_directory_local_data_source.dart';
+import '../datasources/geoapify_remote_data_source.dart';
+
+/// Nomes gravados junto da coordenada no cache, para dar para saber de onde
+/// cada ponto veio quando um resultado parecer errado.
+const _providerGeoapify = 'geoapify';
+const _providerNominatim = 'nominatim';
 
 class AddressRepositoryImpl implements AddressRepository {
+  /// Nominatim + ViaCEP. O ViaCEP continua sendo o dono da consulta de CEP; o
+  /// Nominatim virou plano B do geocoding.
   final AddressRemoteDataSource remoteDataSource;
+
+  /// Fonte principal de coordenadas.
+  final GeoapifyRemoteDataSource geoapifyDataSource;
+
+  /// Quantas chamadas ao Geoapify ainda cabem hoje.
+  final DailyQuota geoapifyQuota;
+
   final AddressLocalDataSource localDataSource;
   final CepDirectoryLocalDataSource directoryDataSource;
   final NetworkInfo networkInfo;
 
-  /// Espera entre os degraus da cascata. Injetável só para o teste não gastar
-  /// segundos de verdade esperando.
+  /// Espera entre os degraus da cascata do Nominatim. Injetável só para o
+  /// teste não gastar segundos de verdade esperando.
   final Duration _cascadeDelay;
+
+  /// Sugestões já buscadas, por texto.
+  ///
+  /// Cobre o caso de o usuário apagar uma letra e digitar de novo, e o de
+  /// reabrir a tela — em ambos a resposta seria idêntica e a chamada,
+  /// desperdício. Vive só enquanto o app está aberto: sugestão é resultado de
+  /// busca, não dado do usuário, e não vale ocupar banco.
+  final _suggestionMemo = <String, List<AddressSuggestion>>{};
+
+  /// Teto do cache de sugestões. Um dia inteiro digitando endereços encheria
+  /// isso sem limite.
+  static const _memoLimit = 60;
+
+  /// Abaixo disso a busca devolve o Brasil inteiro e nenhuma sugestão presta —
+  /// só queimaria cota.
+  static const _minSuggestLength = 4;
 
   AddressRepositoryImpl({
     required this.remoteDataSource,
+    required this.geoapifyDataSource,
+    required this.geoapifyQuota,
     required this.localDataSource,
     required this.directoryDataSource,
     required this.networkInfo,
@@ -112,6 +147,58 @@ class AddressRepositoryImpl implements AddressRepository {
     ));
   }
 
+  /// Sugestões do Geoapify, com duas economias antes de qualquer chamada: o
+  /// texto curto demais nem é consultado, e o texto repetido sai da memória.
+  ///
+  /// Não há plano B aqui. O Nominatim proíbe uso para autocomplete na própria
+  /// política de uso, e ignorar isso levaria o app inteiro a ser bloqueado —
+  /// inclusive o geocoding, que é o que realmente importa. Sem Geoapify, o
+  /// usuário digita o endereço à mão, como sempre pôde.
+  @override
+  Future<List<AddressSuggestion>> suggest(String text, {GeoPoint? bias}) async {
+    final trimmed = text.trim();
+    if (trimmed.length < _minSuggestLength) return const [];
+
+    final key = AddressLocalDataSourceImpl.buildAddressKey(trimmed);
+    final memoized = _suggestionMemo[key];
+    if (memoized != null) return memoized;
+
+    if (!geoapifyDataSource.isConfigured) return const [];
+    if (!geoapifyQuota.hasRoom) return const [];
+    if (!await networkInfo.isConnected) return const [];
+
+    try {
+      final suggestions =
+          await geoapifyDataSource.autocomplete(trimmed, bias: bias);
+      await geoapifyQuota.spend();
+      _memoize(key, suggestions);
+      return suggestions;
+    } catch (_) {
+      // Autocomplete é conveniência. Falhar em silêncio e deixar o usuário
+      // digitar é melhor que interromper o cadastro com um erro.
+      return const [];
+    }
+  }
+
+  void _memoize(String key, List<AddressSuggestion> suggestions) {
+    if (_suggestionMemo.length >= _memoLimit) {
+      _suggestionMemo.remove(_suggestionMemo.keys.first);
+    }
+    _suggestionMemo[key] = suggestions;
+  }
+
+  @override
+  Future<void> rememberSuggestion(AddressSuggestion suggestion) async {
+    await _cacheLocationQuietly(
+      AddressLocalDataSourceImpl.buildAddressKey(suggestion.query.fullText),
+      ApproximateLocation(
+        point: suggestion.point,
+        precision: suggestion.precision,
+      ),
+      _providerGeoapify,
+    );
+  }
+
   /// Vai afrouxando a busca até algo responder, e conta em que degrau parou.
   ///
   /// Antes daqui, um endereço não encontrado caía na localização do próprio
@@ -123,56 +210,71 @@ class AddressRepositoryImpl implements AddressRepository {
 
     final cep = query.normalizedCep;
 
-    // Endereço repetido não precisa de rede. Só o resultado exato é guardado,
-    // então um acerto no cache é sempre exato — nunca um bairro se passando
-    // por porta.
+    // Endereço repetido não precisa de rede. É o corte mais eficaz que existe
+    // aqui: entregador roda a mesma região todo dia.
     final cacheKey = AddressLocalDataSourceImpl.buildAddressKey(query.fullText);
-    final cached = await _cachedGeocode(cacheKey);
-    if (cached != null) {
-      return ApproximateLocation(
-        point: cached,
-        precision: LocationPrecision.exact,
-      );
-    }
+    final cached = await _cachedLocation(cacheKey);
+    if (cached != null) return cached;
 
     // Sem rua, o CEP já é o mais específico possível: a base local resolve na
     // hora, sem gastar requisição.
     if (!query.hasStreet && cep != null) {
-      final local = await _directoryPoint(cep);
-      if (local != null) {
-        return ApproximateLocation(
-          point: local,
-          precision: LocationPrecision.postalCode,
-        );
-      }
+      final local = await _directoryLocation(cep);
+      if (local != null) return local;
     }
 
     if (await networkInfo.isConnected) {
-      final found = await _geocodeCascade(query, cep, cacheKey);
+      final found = await _online(query, cep, cacheKey);
       if (found != null) return found;
     }
 
     // Sem rede, ou nada respondeu: o centroide do CEP ainda coloca o usuário
     // no lugar certo do mapa. É a razão de a base local existir.
     if (cep != null) {
-      final local = await _directoryPoint(cep);
-      if (local != null) {
-        return ApproximateLocation(
-          point: local,
-          precision: LocationPrecision.postalCode,
-        );
-      }
+      final local = await _directoryLocation(cep);
+      if (local != null) return local;
     }
 
     return null;
   }
 
-  /// Cada degrau pede menos ao geocoder que o anterior: número, rua, CEP,
-  /// bairro, cidade. Para no primeiro que responder.
-  Future<ApproximateLocation?> _geocodeCascade(
+  /// Geoapify primeiro; Nominatim quando ele não está disponível ou não achou.
+  ///
+  /// O Geoapify virou principal porque o OpenStreetMap não cobre cidade
+  /// pequena no Brasil — medido: "Rua Carlos Ollig, Apiaí/SP" não existe lá em
+  /// nenhuma forma de consulta, nem pela rua, nem pelo CEP, nem pelo bairro.
+  Future<ApproximateLocation?> _online(
     AddressQuery query,
     String? cep,
     String cacheKey,
+  ) async {
+    if (geoapifyDataSource.isConfigured && geoapifyQuota.hasRoom) {
+      try {
+        final found = await geoapifyDataSource.geocode(query);
+        await geoapifyQuota.spend();
+
+        if (found != null) {
+          await _cacheLocationQuietly(cacheKey, found, _providerGeoapify);
+          return found;
+        }
+      } catch (_) {
+        // Serviço fora do ar ou chave recusada: continua para o plano B em vez
+        // de deixar o usuário sem localização nenhuma.
+      }
+    }
+
+    final fallback = await _nominatimCascade(query, cep);
+    if (fallback != null) {
+      await _cacheLocationQuietly(cacheKey, fallback, _providerNominatim);
+    }
+    return fallback;
+  }
+
+  /// Plano B. Cada degrau pede menos que o anterior: número, rua, CEP, bairro,
+  /// cidade. Para no primeiro que responder.
+  Future<ApproximateLocation?> _nominatimCascade(
+    AddressQuery query,
+    String? cep,
   ) async {
     final hasNumber = (query.number ?? '').trim().isNotEmpty;
 
@@ -232,10 +334,6 @@ class AddressRepositoryImpl implements AddressRepository {
         final point = await attempt.run();
         if (!point.isValid) continue;
 
-        if (attempt.precision == LocationPrecision.exact) {
-          await _cacheGeocodeQuietly(cacheKey, point);
-        }
-
         return ApproximateLocation(point: point, precision: attempt.precision);
       } catch (_) {
         // Esse degrau não respondeu — tenta o próximo, mais amplo.
@@ -245,20 +343,22 @@ class AddressRepositoryImpl implements AddressRepository {
     return null;
   }
 
-  Future<GeoPoint?> _cachedGeocode(String key) async {
+  Future<ApproximateLocation?> _cachedLocation(String key) async {
     try {
-      return await localDataSource.getCachedGeocode(key);
+      return await localDataSource.getCachedLocation(key);
     } on CacheException {
       return null;
     }
   }
 
-  Future<GeoPoint?> _directoryPoint(String cep) async {
+  Future<ApproximateLocation?> _directoryLocation(String cep) async {
     final lookup = await _tryDirectory(cep);
     if (lookup == null || !lookup.hasCoordinate) return null;
 
-    final point = lookup.coordinate;
-    return point != null && point.isValid ? point : null;
+    return ApproximateLocation(
+      point: lookup.coordinate!,
+      precision: LocationPrecision.postalCode,
+    );
   }
 
   @override
@@ -268,34 +368,6 @@ class AddressRepositoryImpl implements AddressRepository {
 
     final lookup = await _tryDirectory(normalized);
     return lookup?.hasCoordinate ?? false ? lookup!.coordinate : null;
-  }
-
-  @override
-  Future<Either<Failure, GeoPoint>> geocode(String fullAddress) async {
-    final key = AddressLocalDataSourceImpl.buildAddressKey(fullAddress);
-
-    try {
-      final cached = await localDataSource.getCachedGeocode(key);
-      if (cached != null) return Right(cached);
-    } on CacheException {
-      // Segue para a rede.
-    }
-
-    if (!await networkInfo.isConnected) {
-      return Left(ConnectionFailure());
-    }
-
-    try {
-      final point = await remoteDataSource.geocode(fullAddress);
-      await _cacheGeocodeQuietly(key, point);
-      return Right(point);
-    } on GeocodingException catch (e) {
-      return Left(GeocodingFailure(e.message));
-    } on ServerException catch (e) {
-      return Left(ServerFailure(statusCode: e.statusCode));
-    } catch (_) {
-      return Left(ConnectionFailure());
-    }
   }
 
   /// Gravar no cache é oportunista: se falhar, o usuário já tem o resultado e
@@ -308,9 +380,13 @@ class AddressRepositoryImpl implements AddressRepository {
     }
   }
 
-  Future<void> _cacheGeocodeQuietly(String key, GeoPoint point) async {
+  Future<void> _cacheLocationQuietly(
+    String key,
+    ApproximateLocation location,
+    String provider,
+  ) async {
     try {
-      await localDataSource.cacheGeocode(key, point);
+      await localDataSource.cacheLocation(key, location, provider: provider);
     } on CacheException {
       // Ignorado de propósito.
     }
