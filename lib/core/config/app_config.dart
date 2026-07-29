@@ -38,4 +38,15 @@ class AppConfig {
   /// começar a recusar — usuário não deveria descobrir o limite através de um
   /// erro.
   static const geoapifyDailyBudget = 2700;
+
+  /// Se a tela de configurações oferece checar atualização no GitHub.
+  ///
+  /// **Precisa ser desligado no build da Play Store.** A política da loja é
+  /// que a atualização venha por ela; apontar o usuário para um APK de fora
+  /// arrisca a remoção do app. Enquanto a distribuição é por GitHub Releases,
+  /// isso é o único jeito de alguém saber que existe versão nova.
+  ///
+  /// Desligar: `--dart-define=UPDATE_CHECK=false`.
+  static const checksForUpdates =
+      bool.fromEnvironment('UPDATE_CHECK', defaultValue: true);
 }

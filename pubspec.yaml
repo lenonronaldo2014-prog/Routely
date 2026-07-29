@@ -5,7 +5,7 @@ publish_to: 'none'
 # O número após o `+` é o versionCode do Android e só pode subir. As três
 # primeiras releases saíram todas como `+1` — daqui em diante ele acompanha a
 # contagem de releases, para nunca haver dois APKs com o mesmo código.
-version: 1.0.3+4
+version: 1.0.4+5
 
 environment:
   sdk: ^3.11.3
@@ -57,6 +57,7 @@ dependencies:
   # preferir). Não pede permissão nenhuma.
   share_plus: ^10.1.4
   path_provider: ^2.1.5
+  package_info_plus: ^9.0.1
 
 dev_dependencies:
   flutter_test:

@@ -32,6 +32,19 @@ class AddressQuery extends Equatable {
     return CepFormatter.isValid(digits) ? digits : null;
   }
 
+  /// A mesma consulta, sem o número da casa.
+  ///
+  /// Existe porque um número que não consta na base derruba o resultado
+  /// inteiro para o nível de cidade, em vez de parar na rua. Repetir sem ele
+  /// recupera a rua certa.
+  AddressQuery withoutNumber() => AddressQuery(
+        cep: cep,
+        street: street,
+        neighborhood: neighborhood,
+        city: city,
+        state: state,
+      );
+
   bool get hasStreet => (street ?? '').trim().isNotEmpty;
   bool get hasCity => (city ?? '').trim().isNotEmpty;
   bool get hasNeighborhood => (neighborhood ?? '').trim().isNotEmpty;

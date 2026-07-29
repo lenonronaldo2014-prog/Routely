@@ -199,12 +199,27 @@ class _LocationPickerPageState extends State<LocationPickerPage> {
     }
 
     final target = LatLng(point.latitude, point.longitude);
-    setState(() => _pin = target);
+
+    // O aviso do topo tem que acompanhar. Sem isso ele continuaria descrevendo
+    // o resultado da busca — "achei só a cidade" — enquanto o pino já está na
+    // posição do usuário, que é outro lugar e outra história.
+    setState(() {
+      _pin = target;
+      _origin = _StartOrigin.gps;
+      _precision = null;
+    });
+
     _mapController.move(target, _addressZoom);
   }
 
+  /// Tocar no mapa é escolha deliberada do usuário, e passa a valer mais que
+  /// qualquer coisa que a busca tenha dito.
   void _handleMapTap(TapPosition _, LatLng point) {
-    setState(() => _pin = point);
+    setState(() {
+      _pin = point;
+      _origin = _StartOrigin.pin;
+      _precision = null;
+    });
   }
 
   /// Converte a posição do dedo em coordenada, com o pino levantado para a
@@ -216,7 +231,11 @@ class _LocationPickerPageState extends State<LocationPickerPage> {
     final local = box.globalToLocal(globalPosition);
     final lifted = Offset(local.dx, local.dy - _dragLift);
 
-    setState(() => _pin = _mapController.camera.screenOffsetToLatLng(lifted));
+    setState(() {
+      _pin = _mapController.camera.screenOffsetToLatLng(lifted);
+      _origin = _StartOrigin.pin;
+      _precision = null;
+    });
   }
 
   void _confirm() {
@@ -475,9 +494,12 @@ class _Header extends StatelessWidget {
     final c = context.colors;
 
     final (icon, hint, tone) = switch (origin) {
+      // Serve para o pino que já estava salvo e para o que o usuário acabou de
+      // marcar. Nos dois casos a informação útil é a mesma: este ponto é dele,
+      // não de um serviço, e ainda dá para mudar.
       _StartOrigin.pin => (
           Icons.push_pin_rounded,
-          'Este é o ponto que você marcou antes',
+          'Ponto marcado por você. Toque ou arraste para mudar',
           c.textTertiary,
         ),
       // Dizer só "achei este endereço" depois de casar apenas a cidade seria

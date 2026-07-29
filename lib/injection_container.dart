@@ -9,6 +9,7 @@ import 'core/database/app_database.dart';
 import 'core/network/network_info.dart';
 import 'core/services/daily_quota.dart';
 import 'core/services/navigation_launcher.dart';
+import 'core/services/update_checker.dart';
 import 'core/settings/app_settings.dart';
 import 'features/location/data/repositories/location_repository_impl.dart';
 import 'features/location/domain/repositories/location_repository.dart';
@@ -224,6 +225,9 @@ Future<void> init() async {
     ),
   );
   sl.registerLazySingleton(() => NavigationLauncher());
+  sl.registerLazySingleton<UpdateChecker>(
+    () => GitHubUpdateChecker(client: sl()),
+  );
   sl.registerLazySingleton(() => AppSettings(sl()));
   sl.registerLazySingleton(() => AppDatabase());
 

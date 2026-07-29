@@ -128,6 +128,11 @@ class _FakeCache implements AddressLocalDataSource {
 /// Geoapify controlável: responde o que estiver em [answer], ou nada.
 class _FakeGeoapify implements GeoapifyRemoteDataSource {
   final ApproximateLocation? answer;
+
+  /// O que responder quando a consulta chega sem número. Null significa
+  /// responder [answer] nos dois casos.
+  final ApproximateLocation? answerWithoutNumber;
+
   final List<AddressSuggestion> suggestions;
   final bool configured;
 
@@ -137,8 +142,12 @@ class _FakeGeoapify implements GeoapifyRemoteDataSource {
   int geocodeCalls = 0;
   int autocompleteCalls = 0;
 
+  /// As consultas recebidas, para checar se a repetição sem número aconteceu.
+  final queries = <AddressQuery>[];
+
   _FakeGeoapify({
     this.answer,
+    this.answerWithoutNumber,
     this.suggestions = const [],
     this.configured = true,
     this.fails = false,
@@ -150,8 +159,11 @@ class _FakeGeoapify implements GeoapifyRemoteDataSource {
   @override
   Future<ApproximateLocation?> geocode(AddressQuery query) async {
     geocodeCalls++;
+    queries.add(query);
     if (fails) throw GeocodingException('fora do ar');
-    return answer;
+
+    final hasNumber = (query.number ?? '').isNotEmpty;
+    return hasNumber ? answer : (answerWithoutNumber ?? answer);
   }
 
   @override
@@ -401,6 +413,74 @@ void main() {
       expect(remote.calls, isEmpty, reason: 'plano B só entra quando falta');
     });
 
+    // O caso real: "Rua Carlos Olig, 73, Apiaí". O 73 não existe naquela rua,
+    // e o Geoapify não para na rua — desiste do endereço e devolve a cidade,
+    // a 1,6 km. Sem repetir sem o número, o app abriria o mapa lá.
+    const cityFallback = ApproximateLocation(
+      point: GeoPoint(latitude: -24.5076, longitude: -48.8461),
+      precision: LocationPrecision.city,
+    );
+    const streetHit = ApproximateLocation(
+      point: GeoPoint(latitude: -24.4927, longitude: -48.8446),
+      precision: LocationPrecision.street,
+    );
+
+    test('número inexistente: repete sem ele e acha a rua', () async {
+      final geoapify = _FakeGeoapify(
+        answer: cityFallback,
+        answerWithoutNumber: streetHit,
+      );
+
+      final result = await _repository(
+        remote: _FakeRemote({}),
+        geoapify: geoapify,
+      ).locateApproximate(_query);
+
+      expect(result?.precision, LocationPrecision.street);
+      expect(result?.point, streetHit.point);
+      expect(geoapify.geocodeCalls, 2);
+      expect(geoapify.queries.last.number, isNull);
+      expect(
+        geoapify.queries.last.street,
+        _query.street,
+        reason: 'só o número sai; o resto da consulta continua',
+      );
+    });
+
+    test('resultado bom não gasta uma segunda chamada', () async {
+      final geoapify = _FakeGeoapify(answer: exact);
+
+      await _repository(remote: _FakeRemote({}), geoapify: geoapify)
+          .locateApproximate(_query);
+
+      expect(geoapify.geocodeCalls, 1);
+    });
+
+    // Rua e CEP caem no mesmo quarteirão. Repetir trocaria um resultado bom
+    // por outro parecido, gastando cota à toa.
+    test('resultado no nível da rua não vale repetir', () async {
+      final geoapify = _FakeGeoapify(answer: streetHit);
+
+      await _repository(remote: _FakeRemote({}), geoapify: geoapify)
+          .locateApproximate(_query);
+
+      expect(geoapify.geocodeCalls, 1);
+    });
+
+    test('se a repetição vier pior, o primeiro resultado vale', () async {
+      final geoapify = _FakeGeoapify(
+        answer: cityFallback,
+        answerWithoutNumber: null,
+      );
+
+      final result = await _repository(
+        remote: _FakeRemote({}),
+        geoapify: geoapify,
+      ).locateApproximate(_query);
+
+      expect(result?.precision, LocationPrecision.city);
+    });
+
     test('não achou: cai para a cascata do Nominatim', () async {
       final remote = _FakeRemote({'street'});
       final geoapify = _FakeGeoapify();
@@ -409,7 +489,11 @@ void main() {
           .locateApproximate(_query);
 
       expect(result?.precision, LocationPrecision.street);
-      expect(geoapify.geocodeCalls, 1);
+      expect(
+        geoapify.geocodeCalls,
+        2,
+        reason: 'não achar nada também merece a tentativa sem o número',
+      );
     });
 
     test('fora do ar: cai para a cascata do Nominatim', () async {
@@ -461,6 +545,32 @@ void main() {
       ).locateApproximate(_query);
 
       expect(cache.providers.values, ['geoapify']);
+    });
+
+    // Gravar uma desistência congela a desistência. Aconteceu de verdade: a
+    // correção da repetição sem número só teve efeito depois de limpar os
+    // dados do app, porque o resultado antigo, de nível cidade, continuava
+    // saindo do cache.
+    test('resultado no nível cidade não é guardado', () async {
+      final cache = _FakeCache();
+      await _repository(
+        remote: _FakeRemote({}),
+        geoapify: _FakeGeoapify(answer: cityFallback),
+        cache: cache,
+      ).locateApproximate(_query);
+
+      expect(cache.locations, isEmpty);
+    });
+
+    test('resultado no nível da rua é guardado', () async {
+      final cache = _FakeCache();
+      await _repository(
+        remote: _FakeRemote({}),
+        geoapify: _FakeGeoapify(answer: streetHit),
+        cache: cache,
+      ).locateApproximate(_query);
+
+      expect(cache.locations, isNotEmpty);
     });
   });
 

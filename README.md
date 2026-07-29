@@ -653,6 +653,11 @@ flutter run --dart-define-from-file=geoapify.json
   de celular; usar dois ao mesmo tempo, não. Isso exigiria servidor — e a
   decisão consciente foi manter o custo de operação em zero.
 
+- **"Buscar atualização" precisa sair no build da Play Store.** A loja exige
+  que a atualização venha por ela; apontar para um APK de fora arrisca a
+  remoção do app. Enquanto a distribuição é por GitHub Releases, é o único
+  jeito de o usuário saber que existe versão nova. Desligar com
+  `--dart-define=UPDATE_CHECK=false`.
 - **A cota do Geoapify é por chave, não por usuário.** São 3000 consultas por
   dia somando todo mundo que instalar o app. As economias descritas acima fazem
   isso durar bastante, mas com muitos usuários ativos o teto chega — e aí todos

@@ -3,9 +3,13 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../../../../core/config/app_config.dart';
 import '../../../../core/error/failures.dart';
+import '../../../../core/services/update_checker.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/widgets/app_card.dart';
@@ -448,8 +452,100 @@ class _SectionHint extends StatelessWidget {
   }
 }
 
-class _AboutCard extends StatelessWidget {
+class _AboutCard extends StatefulWidget {
   const _AboutCard();
+
+  @override
+  State<_AboutCard> createState() => _AboutCardState();
+}
+
+class _AboutCardState extends State<_AboutCard> {
+  /// Null enquanto ainda não leu. O texto simplesmente não aparece nesse
+  /// instante, em vez de piscar um valor de mentira.
+  String? _version;
+
+  /// Só o número, sem o build. É o que se compara com a tag do GitHub.
+  String? _versionNumber;
+
+  bool _isChecking = false;
+
+  /// Mensagem do resultado da última checagem, e se ela é boa notícia.
+  String? _updateMessage;
+  bool _updateFound = false;
+  String? _updatePageUrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVersion();
+  }
+
+  /// Pergunta ao GitHub qual é a última release.
+  ///
+  /// Só por botão. Checar sozinho ao abrir o app gastaria rede de quem
+  /// trabalha com dados limitados para responder algo que quase sempre é
+  /// "está atualizado".
+  Future<void> _checkForUpdate() async {
+    final current = _versionNumber;
+    if (_isChecking || current == null) return;
+
+    setState(() {
+      _isChecking = true;
+      _updateMessage = null;
+      _updatePageUrl = null;
+    });
+
+    try {
+      final result = await sl<UpdateChecker>().check(current);
+      if (!mounted) return;
+
+      setState(() {
+        _isChecking = false;
+        _updateFound = result.hasUpdate;
+        _updatePageUrl = result.hasUpdate ? result.pageUrl : null;
+        _updateMessage = result.hasUpdate
+            ? 'Versão ${result.latest} disponível'
+            : 'Você já está na versão mais recente';
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      // Sem detalhe técnico: o usuário não pode fazer nada com um código de
+      // status, e a ação útil é a mesma de sempre — tentar de novo depois.
+      setState(() {
+        _isChecking = false;
+        _updateFound = false;
+        _updateMessage = 'Não consegui verificar agora. Tente mais tarde.';
+      });
+    }
+  }
+
+  Future<void> _openReleasePage() async {
+    final url = _updatePageUrl;
+    if (url == null) return;
+
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
+  /// Lê a versão do pacote instalado, e não uma constante no código.
+  ///
+  /// Constante escrita à mão sai de sincronia com o `pubspec.yaml` na primeira
+  /// vez que alguém esquece de atualizar as duas — e aí a tela que existe para
+  /// responder "qual versão você está usando?" passa a mentir. O número do
+  /// build vem junto porque duas correções podem sair com o mesmo nome de
+  /// versão.
+  Future<void> _loadVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      setState(() {
+        _version = 'Versão ${info.version} (${info.buildNumber})';
+        _versionNumber = info.version;
+      });
+    } catch (_) {
+      // Sem versão a tela continua útil. Não vale mostrar erro por isso.
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -473,6 +569,55 @@ class _AboutCard extends StatelessWidget {
             'Suas entregas, na melhor ordem.',
             style: TextStyle(fontSize: 12.5, color: c.textTertiary),
           ),
+          if (_version != null) ...[
+            const SizedBox(height: AppSpacing.xxs),
+            SelectableText(
+              _version!,
+              style: TextStyle(
+                fontSize: 12,
+                color: c.textTertiary,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
+          if (AppConfig.checksForUpdates && _versionNumber != null) ...[
+            const SizedBox(height: AppSpacing.xs),
+            TextButton.icon(
+              onPressed: _isChecking ? null : _checkForUpdate,
+              icon: _isChecking
+                  ? const SizedBox(
+                      width: 15,
+                      height: 15,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh_rounded, size: 18),
+              label: Text(
+                _isChecking ? 'Verificando…' : 'Buscar atualização',
+              ),
+            ),
+            if (_updateMessage != null) ...[
+              Text(
+                _updateMessage!,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: _updateFound ? FontWeight.w700 : FontWeight.w400,
+                  color: _updateFound ? c.success : c.textTertiary,
+                ),
+              ),
+              if (_updateFound) ...[
+                const SizedBox(height: AppSpacing.xs),
+                // Abre a página da release no navegador em vez de baixar por
+                // dentro: instalar APK pelo próprio app exigiria permissão de
+                // fonte desconhecida e é justamente o que a Play Store proíbe.
+                FilledButton.icon(
+                  onPressed: _openReleasePage,
+                  icon: const Icon(Icons.download_rounded, size: 18),
+                  label: const Text('Abrir página de download'),
+                ),
+              ],
+            ],
+          ],
         ],
       ),
     );

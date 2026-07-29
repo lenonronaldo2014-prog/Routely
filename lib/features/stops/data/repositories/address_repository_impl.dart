@@ -249,26 +249,94 @@ class AddressRepositoryImpl implements AddressRepository {
     String cacheKey,
   ) async {
     if (geoapifyDataSource.isConfigured && geoapifyQuota.hasRoom) {
-      try {
-        final found = await geoapifyDataSource.geocode(query);
-        await geoapifyQuota.spend();
-
-        if (found != null) {
-          await _cacheLocationQuietly(cacheKey, found, _providerGeoapify);
-          return found;
-        }
-      } catch (_) {
-        // Serviço fora do ar ou chave recusada: continua para o plano B em vez
-        // de deixar o usuário sem localização nenhuma.
+      final found = await _geoapify(query);
+      if (found != null) {
+        await _remember(cacheKey, found, _providerGeoapify);
+        return found;
       }
     }
 
     final fallback = await _nominatimCascade(query, cep);
     if (fallback != null) {
-      await _cacheLocationQuietly(cacheKey, fallback, _providerNominatim);
+      await _remember(cacheKey, fallback, _providerNominatim);
     }
     return fallback;
   }
+
+  /// Guarda o resultado — desde que ele valha a pena ser lembrado.
+  ///
+  /// Acerto no bairro ou na cidade não entra no cache. Um resultado desses não
+  /// é uma resposta, é uma desistência, e gravá-lo congela a desistência: o
+  /// endereço nunca mais seria consultado, mesmo depois de o app melhorar ou
+  /// de o provedor ganhar o dado.
+  ///
+  /// Foi exatamente o que aconteceu ao corrigir a repetição sem número. A
+  /// correção só teve efeito depois de limpar os dados do app, porque o
+  /// resultado antigo, de nível cidade, continuava saindo do cache.
+  ///
+  /// O custo de não guardar é baixo: são justamente os casos em que o usuário
+  /// acaba marcando o ponto no mapa, e aí a coordenada fica gravada na parada
+  /// e nenhuma consulta acontece de novo.
+  Future<void> _remember(
+    String key,
+    ApproximateLocation location,
+    String provider,
+  ) async {
+    if (_tooCoarse(location.precision)) return;
+    await _cacheLocationQuietly(key, location, provider);
+  }
+
+  /// Consulta o Geoapify, repetindo sem o número quando ele estraga a busca.
+  ///
+  /// Um número que não consta na base não faz o Geoapify parar na rua: ele
+  /// desiste do endereço inteiro e devolve a **cidade**. Medido com
+  /// "Rua Carlos Olig, Apiaí/SP":
+  ///
+  ///   nº 20          -> building, na porta
+  ///   nº 73          -> city, a 1,6 km  (o 73 não existe naquela rua)
+  ///   sem número     -> street, em cima da rua
+  ///
+  /// Aceitar o primeiro resultado jogaria o usuário no centro da cidade tendo
+  /// a rua certa disponível. A segunda chamada só acontece quando a primeira
+  /// degradou a esse ponto, então o custo extra é raro.
+  Future<ApproximateLocation?> _geoapify(AddressQuery query) async {
+    final first = await _geoapifyAttempt(query);
+    if (first != null && !_tooCoarse(first.precision)) return first;
+
+    final hasNumber = (query.number ?? '').trim().isNotEmpty;
+    if (!hasNumber || !query.hasStreet) return first;
+    if (!geoapifyQuota.hasRoom) return first;
+
+    final retry = await _geoapifyAttempt(query.withoutNumber());
+    if (retry == null) return first;
+
+    // Fica com o melhor dos dois. A repetição normalmente ganha, mas se ela
+    // vier pior ainda, o primeiro resultado continua valendo.
+    if (first == null) return retry;
+    return retry.precision.index < first.precision.index ? retry : first;
+  }
+
+  Future<ApproximateLocation?> _geoapifyAttempt(AddressQuery query) async {
+    try {
+      final found = await geoapifyDataSource.geocode(query);
+      await geoapifyQuota.spend();
+      return found;
+    } catch (_) {
+      // Serviço fora do ar ou chave recusada: devolve nada e deixa o plano B
+      // assumir, em vez de o usuário ficar sem localização nenhuma.
+      return null;
+    }
+  }
+
+  /// Grosseira a ponto de valer outra chamada: bairro ou cidade.
+  ///
+  /// Rua e CEP não entram. Os dois caem no mesmo quarteirão, e repetir a
+  /// consulta gastaria cota para trocar um resultado bom por outro parecido.
+  ///
+  /// `LocationPrecision` está declarada da mais fina para a mais grosseira, o
+  /// que faz o índice servir de ordenação.
+  static bool _tooCoarse(LocationPrecision precision) =>
+      precision.index > LocationPrecision.postalCode.index;
 
   /// Plano B. Cada degrau pede menos que o anterior: número, rua, CEP, bairro,
   /// cidade. Para no primeiro que responder.
